@@ -1,0 +1,7 @@
+@echo off
+echo Building AppVolumeControl.exe with custom icon...
+pyinstaller --onefile --icon=icon.ico --name=AppVolumeControl --add-data "nircmd.exe;." volume_keys.py
+echo.
+echo Build complete! Check the dist folder
+echo The exe file will be created as AppVolumeControl.exe
+pause 
