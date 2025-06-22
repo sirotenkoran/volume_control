@@ -34,7 +34,9 @@ def create_default_config(config_path):
         "low_volume": 0.2,
         "high_volume": 1.0,
         "app_name": "Discord.exe",
-        "show_console": False
+        "show_console": False,
+        "target_devices": "all",  # "all" or list of device names
+        "exclude_devices": []     # list of device names to exclude
     }
     # Save with comments in the form of comments (JSON does not support comments, but you can add a separate README file)
     with open(config_path, 'w', encoding='utf-8') as f:
@@ -53,7 +55,9 @@ def load_config():
         "low_volume": 0.2,
         "high_volume": 1.0,
         "app_name": "Discord.exe",
-        "show_console": False
+        "show_console": False,
+        "target_devices": "all",
+        "exclude_devices": []
     }
     
     try:
@@ -77,7 +81,7 @@ def create_temp_bat_files(config):
     """Creates temporary BAT files using multiple approaches"""
     nircmd_path = resource_path("nircmd.exe")
     
-    print("🎯 Используем комбинированный подход для управления Discord...")
+    print("🎯 Using combined approach for Discord control...")
     
     # Approach 1: Try multiple Discord app name variations
     discord_variations = [
@@ -99,12 +103,6 @@ def create_temp_bat_files(config):
         lower_bat_content += f'echo Volume of {variation} lowered to {int(config["low_volume"] * 100)}%\n'
         full_bat_content += f'"{nircmd_path}" setappvolume "{variation}" {config["high_volume"]}\n'
         full_bat_content += f'echo Volume of {variation} restored to {int(config["high_volume"] * 100)}%\n'
-    
-    # Add system volume control as backup (this affects all audio)
-    # lower_bat_content += f'"{nircmd_path}" setsysvolume {int(config["low_volume"] * 65535)}\n'
-    # lower_bat_content += f'echo System volume lowered to {int(config["low_volume"] * 100)}%\n'
-    # full_bat_content += f'"{nircmd_path}" setsysvolume {int(config["high_volume"] * 65535)}\n'
-    # full_bat_content += f'echo System volume restored to {int(config["high_volume"] * 100)}%\n'
     
     # Create temporary files
     temp_dir = tempfile.gettempdir()
@@ -139,11 +137,11 @@ def toggle_volume_pycaw():
     global volume_low, config, discord_sessions
     if volume_low:
         # Restore volume
-        set_discord_volume(discord_sessions, config['high_volume'])
+        set_discord_volume_on_all_devices(discord_sessions, config['high_volume'], config)
         volume_low = False
     else:
         # Lower volume
-        set_discord_volume(discord_sessions, config['low_volume'])
+        set_discord_volume_on_all_devices(discord_sessions, config['low_volume'], config)
         volume_low = True
 
 def check_for_ctrl_c():
@@ -160,73 +158,86 @@ def check_for_ctrl_c():
     except:
         return False
 
-def print_discord_audio_sessions():
-    print("\n🔍 Поиск аудиосессий Discord через pycaw...")
-    sessions = AudioUtilities.GetAllSessions()
-    found = False
-    for session in sessions:
-        proc = session.Process
-        if proc and proc.name().lower().startswith('discord'):
-            found = True
-            print(f"Discord session: PID={proc.pid}, name={proc.name()}, id={session._ctl.GetSessionIdentifier()}")
-            try:
-                volume = session._ctl.QueryInterface(ISimpleAudioVolume).GetMasterVolume()
-                mute = session._ctl.QueryInterface(ISimpleAudioVolume).GetMute()
-                print(f"  Volume: {volume*100:.1f}%, Muted: {mute}")
-            except Exception as e:
-                print(f"  [Ошибка получения громкости: {e}]")
-    if not found:
-        print("Discord аудиосессии не найдены!")
-
-def get_discord_sessions():
-    """Get all Discord audio sessions using pycaw"""
-    sessions = AudioUtilities.GetAllSessions()
+def get_discord_sessions_on_all_devices():
+    """Get Discord sessions on all available audio devices"""
     discord_sessions = []
-    for session in sessions:
-        proc = session.Process
-        if proc and proc.name().lower().startswith('discord'):
-            try:
-                volume_interface = session._ctl.QueryInterface(ISimpleAudioVolume)
-                discord_sessions.append({
-                    'session': session,
-                    'volume_interface': volume_interface,
-                    'pid': proc.pid,
-                    'name': proc.name(),
-                    'session_id': session._ctl.GetSessionIdentifier()
-                })
-            except Exception as e:
-                print(f"Ошибка получения интерфейса для {proc.name()}: {e}")
-    return discord_sessions
+    
+    try:
+        # Get Discord sessions on default device (this is what we can control)
+        sessions = AudioUtilities.GetAllSessions()
+        
+        for session in sessions:
+            proc = session.Process
+            if proc and proc.name().lower().startswith('discord'):
+                try:
+                    volume_interface = session._ctl.QueryInterface(ISimpleAudioVolume)
+                    print(f"Discord session found: PID={proc.pid}")
+                    
+                    discord_sessions.append({
+                        'session': session,
+                        'volume_interface': volume_interface,
+                        'pid': proc.pid,
+                        'name': proc.name(),
+                        'session_id': session._ctl.GetSessionIdentifier()
+                    })
+                except Exception as e:
+                    print(f"Error getting interface for {proc.name()}: {e}")
+        
+        return discord_sessions, []
+        
+    except Exception as e:
+        print(f"Error getting sessions: {e}")
+        return [], []
 
-def set_discord_volume(sessions, volume):
-    """Set volume for all Discord sessions"""
+def should_control_device(device_name, config):
+    """Check if we should control volume on this device based on config"""
+    if config['target_devices'] == "all":
+        # Control all devices except excluded ones
+        return device_name not in config['exclude_devices']
+    else:
+        # Control only specified devices
+        return device_name in config['target_devices']
+
+def set_discord_volume_on_all_devices(sessions, volume, config):
+    """Set volume for Discord on all target sessions (PID-based, pycaw only)"""
+    print(f"\n🎵 Setting Discord volume to {volume*100:.0f}%...")
     for i, session_info in enumerate(sessions):
         try:
             session_info['volume_interface'].SetMasterVolume(volume, None)
-            print(f"Установлена громкость {volume*100:.0f}% для Discord сессии {i+1} (PID: {session_info['pid']})")
+            print(f"  ✅ Discord session {i+1} (PID: {session_info['pid']}) - {volume*100:.0f}%")
         except Exception as e:
-            print(f"Ошибка установки громкости для сессии {i+1}: {e}")
+            print(f"  ❌ Error Discord session {i+1}: {e}")
 
 def main():
     global config, discord_sessions
     
+    print("""
+Warning!
+  This program only works for the default output device in Windows.
+  Make sure that in Discord settings you have selected 'Output device: Default',
+  or that the default system output device matches the one Discord uses.
+""")
+    
     # Load configuration
     config = load_config()
     
-    # Get Discord sessions
-    discord_sessions = get_discord_sessions()
+    # Get Discord sessions (only for default device)
+    discord_sessions, _ = get_discord_sessions_on_all_devices()
     
     if not discord_sessions:
-        print("❌ Discord аудиосессии не найдены!")
+        print("❌ Discord audio sessions not found!")
+        print("💡 Make sure Discord is running, playing audio and using the default device!")
+        print("\nPress Enter to exit...")
+        input()
         return
     
-    print(f"✅ Найдено {len(discord_sessions)} Discord аудиосессий:")
+    print(f"\n✅ Found {len(discord_sessions)} Discord audio sessions:")
     for i, session_info in enumerate(discord_sessions):
-        print(f"  {i+1}. PID: {session_info['pid']}, ID: {session_info['session_id']}")
+        print(f"  {i+1}. PID: {session_info['pid']}")
     
-    print("\n🎵 Volume Control started!")
+    print(f"\n🎵 Volume Control started!")
     print(f"Hotkey: {config['hotkey'].upper()}")
-    print(f"Target: {len(discord_sessions)} Discord sessions via pycaw")
+    print(f"Target: {len(discord_sessions)} Discord sessions (PID-based, default device only)")
     print(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
     print("Ctrl+C (in console) - Exit")
     
