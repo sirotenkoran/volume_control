@@ -57,14 +57,14 @@ def create_tray_icon(on_restore_window):
                 on_restore_window()
         
         menu = pystray.Menu(
-            pystray.MenuItem("Restore Window", on_clicked),
+            pystray.MenuItem("Restore Window", on_clicked, default=True),
             pystray.MenuItem("Exit", on_clicked)
         )
         
         tray_icon = pystray.Icon(
             "Discord Volume Control",
             image,
-            f"Discord Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%",
+            f"Discord Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%\nLeft-click to restore window",
             menu
         )
         
@@ -475,7 +475,6 @@ or that the default system output device matches the one Discord uses."""
             tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
             tray_thread.start()
             tray_icon.visible = True  # Make it visible from the start
-            log_message("✅ Tray icon created successfully")
         else:
             log_message("❌ Failed to create tray icon")
     
