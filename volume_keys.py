@@ -15,6 +15,10 @@ from PIL import Image
 import ctypes
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+import win32event
+import win32api
+import winerror
+import win32con
 
 # Hide console window when running as exe
 if getattr(sys, 'frozen', False):
@@ -39,7 +43,7 @@ def get_exe_directory():
         # If running as script
         return os.path.abspath(".")
 
-def create_tray_icon(on_restore_window):
+def create_tray_icon(on_restore_window, on_exit):
     global tray_icon
     try:
         icon_path = resource_path("icon.ico")
@@ -50,21 +54,19 @@ def create_tray_icon(on_restore_window):
         
         def on_clicked(icon, item):
             if str(item) == "Exit":
-                icon.visible = False
-                icon.stop()
-                os._exit(0)
+                on_exit()
             elif str(item) == "Restore Window":
                 on_restore_window()
         
         menu = pystray.Menu(
-            pystray.MenuItem("Restore Window", on_clicked, default=True),
+            pystray.MenuItem("Restore Window", on_clicked, default=True),  # This makes it the left-click action
             pystray.MenuItem("Exit", on_clicked)
         )
         
         tray_icon = pystray.Icon(
-            "Discord Volume Control",
+            "App Volume Control",
             image,
-            f"Discord Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%\nLeft-click to restore window",
+            f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%\nLeft-click to restore window",
             menu
         )
         
@@ -325,7 +327,7 @@ def show_tray_icon(on_restore_window):
         pystray.MenuItem("Show Window", on_clicked),
         pystray.MenuItem("Exit", on_clicked)
     )
-    tray_icon = pystray.Icon("Discord Volume Control", image, "Discord Volume Control", menu)
+    tray_icon = pystray.Icon("App Volume Control", image, "App Volume Control", menu)
     tray_icon.visible = True
     tray_icon.run_detached()
     tray_icon._listener._on_notify = lambda *a, **k: None  # suppress notification popups
@@ -348,7 +350,7 @@ def gui_main():
     global config, log_text, tray_icon
     config = load_config()
     root = tk.Tk()
-    root.title("Discord Volume Control")
+    root.title("App Volume Control")
     root.geometry("600x700")
     root.resizable(True, True)
     root.minsize(500, 600)
@@ -370,7 +372,7 @@ def gui_main():
     main_frame.columnconfigure(1, weight=1)
     
     # Title
-    title_label = ttk.Label(main_frame, text="Discord Volume Control", font=('Arial', 16, 'bold'))
+    title_label = ttk.Label(main_frame, text="App Volume Control", font=('Arial', 16, 'bold'))
     title_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))
     
     # Warning about default device
@@ -436,10 +438,33 @@ or that the default system output device matches the one Discord uses."""
     
     # Restore from tray
     def restore_from_tray():
-        root.deiconify()
-        root.lift()
-        root.focus_force()
+        # A robust way to restore the window from any state (tray, minimized, or background)
+        root.deiconify() # Restore if iconic (minimized) or withdrawn (tray)
+        root.lift()      # Bring to the top of the stacking order
+        
+        # A common trick on Windows to force the window to the foreground.
+        # It's briefly made "always on top" and then returned to normal.
+        root.attributes('-topmost', 1)
+        root.update_idletasks() # Process pending events to apply the change
+        root.attributes('-topmost', 0)
+        
+        root.focus_force() # Grab the input focus
         # Don't hide the tray icon - keep it visible like Discord/Telegram
+    
+    # Handle actual exit (from tray menu)
+    def on_exit():
+        # Signal the listener thread to shut down gracefully
+        global shutdown_event
+        if shutdown_event:
+            win32event.SetEvent(shutdown_event)
+
+        # atexit will handle the cleanup of the mutex.
+        # We just need to stop the tray icon and close the hidden window.
+        if tray_icon:
+            tray_icon.visible = False
+            tray_icon.stop()
+        root.destroy()
+        os._exit(0)
     
     # Log display
     log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=10)
@@ -451,7 +476,7 @@ or that the default system output device matches the one Discord uses."""
     log_text.grid(row=0, column=0, sticky='nsew')
     
     # Initial log messages
-    log_message("🎵 Discord Volume Control started!")
+    log_message("🎵 App Volume Control started!")
     log_message(f"Hotkey: {config['hotkey'].upper()}")
     log_message(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
     log_message("Target: Discord sessions (cached for instant response)")
@@ -469,7 +494,7 @@ or that the default system output device matches the one Discord uses."""
     
     # Create tray icon ONCE and run in background
     if tray_icon is None:
-        tray_icon = create_tray_icon(restore_from_tray)
+        tray_icon = create_tray_icon(restore_from_tray, on_exit)
         if tray_icon:
             # Start tray icon in a separate thread
             tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
@@ -487,10 +512,163 @@ or that the default system output device matches the one Discord uses."""
     # Start hotkey listener in background
     threading.Thread(target=lambda: start_hotkey_listener(toggle_volume_pycaw, config), daemon=True).start()
     
+    # Start the listener thread that will show the window if another instance is run
+    start_show_window_listener(root, restore_from_tray)
+    
     root.mainloop()
 
+# Global handles for single instance lock
+mutex_handle = None
+lock_file_handle = None
+shutdown_event = None
+
+def check_single_instance():
+    """
+    Checks if another instance is running. If so, signals it to show its
+    window and returns False. If not, it sets up the mutex and returns True.
+    """
+    global mutex_handle
+    # Use a unique name for mutex and event to avoid collisions
+    mutex_name = "Global\\AppVolumeControl_App_Mutex_v2.0"
+    show_event_name = "Global\\AppVolumeControl_ShowWindowEvent_v2.0"
+    
+    try:
+        # Try to create a mutex to guarantee single instance
+        mutex_handle = win32event.CreateMutex(None, 1, mutex_name)
+        
+        # Check if the mutex already existed
+        if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+            # Another instance is running. Release the handle we erroneously got.
+            if mutex_handle:
+                win32api.CloseHandle(mutex_handle)
+                mutex_handle = None
+            
+            # Signal the other instance to show its window.
+            try:
+                event_handle = win32event.OpenEvent(win32con.EVENT_MODIFY_STATE, False, show_event_name)
+                if event_handle:
+                    win32event.SetEvent(event_handle)
+                    win32api.CloseHandle(event_handle)
+            except Exception:
+                # Failed to signal, but we still exit gracefully.
+                pass
+                
+            return False # Indicate that this instance should exit.
+        
+        # This is the first instance. The mutex is now owned by this process.
+        return True
+    except Exception as e:
+        print(f"Mutex check failed, using file lock fallback: {e}")
+        # The fallback does not support showing the window
+        return check_single_instance_fallback()
+
+def check_single_instance_fallback():
+    """
+    Fallback method using a file lock. This is less robust than a mutex
+    but works if pywin32 is not available.
+    """
+    global lock_file_handle
+    lock_file_path = os.path.join(tempfile.gettempdir(), "app_volume_control.lock")
+    try:
+        # Try to open the file in exclusive mode without blocking
+        lock_file_handle = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        # Write PID for debugging purposes
+        os.write(lock_file_handle, str(os.getpid()).encode())
+        return True
+    except (IOError, OSError):
+        # If the file exists, another instance is likely running
+        if lock_file_handle:
+            os.close(lock_file_handle)
+            lock_file_handle = None
+        return False
+    except Exception as e:
+        print(f"File lock fallback failed: {e}")
+        return True # Failsafe: allow running if check fails
+
+def start_show_window_listener(root, restore_func):
+    """
+    Starts a thread that waits for an event to show the main window.
+    This event is signaled by a new instance of the application.
+    Also handles graceful shutdown via another event.
+    """
+    global shutdown_event
+    # Create an unnamed event for shutdown signal
+    shutdown_event = win32event.CreateEvent(None, 0, 0, None)
+
+    def listener():
+        show_event_name = "Global\\AppVolumeControl_ShowWindowEvent_v2.0"
+        show_window_event = None
+        try:
+            # Create the named event that other instances will signal.
+            show_window_event = win32event.CreateEvent(None, 0, 0, show_event_name)
+            handles = [show_window_event, shutdown_event]
+            
+            while True:
+                # Wait for either the "show window" event or the "shutdown" event
+                result = win32event.WaitForMultipleObjects(handles, 0, win32event.INFINITE)
+                
+                if result == win32event.WAIT_OBJECT_0:
+                    # "Show window" event was signaled. Unconditionally schedule
+                    # the restore function on the main thread to bring the window
+                    # to the foreground, even if it was just in the background.
+                    root.after(0, restore_func)
+                elif result == win32event.WAIT_OBJECT_0 + 1:
+                    # "Shutdown" event was signaled, exit the thread
+                    break
+                else:
+                    # Some other error occurred, exit the thread
+                    break
+        except Exception:
+            pass # Silently exit thread on any error
+        finally:
+            # Clean up the handle
+            if show_window_event:
+                win32api.CloseHandle(show_window_event)
+
+    listener_thread = threading.Thread(target=listener, daemon=True)
+    listener_thread.start()
+
 def main():
+    # Register cleanup function to release the lock on exit
+    import atexit
+    atexit.register(cleanup_single_instance_lock)
+
+    # Check if another instance is already running. If so, signal it and exit.
+    if not check_single_instance():
+        sys.exit(0)
+    
+    # The old main() logic is now here
     gui_main()
+
+def cleanup_single_instance_lock():
+    """
+    Cleans up the mutex, events, and lock file on exit.
+    This function is registered with atexit.
+    """
+    global mutex_handle, lock_file_handle, shutdown_event
+    try:
+        # Clean up the mutex handle
+        if mutex_handle:
+            win32api.CloseHandle(mutex_handle)
+            mutex_handle = None
+
+        # Clean up the shutdown event handle
+        if shutdown_event:
+            # This is not strictly necessary as thread is daemon, but it's good practice
+            win32event.SetEvent(shutdown_event) 
+            win32api.CloseHandle(shutdown_event)
+            shutdown_event = None
+        
+        # Clean up the fallback file lock if it was used
+        if lock_file_handle:
+            os.close(lock_file_handle)
+            lock_file_path = os.path.join(tempfile.gettempdir(), "app_volume_control.lock")
+            if os.path.exists(lock_file_path):
+                os.remove(lock_file_path)
+            lock_file_handle = None
+            
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main() 
