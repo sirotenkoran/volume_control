@@ -430,8 +430,7 @@ or that the default system output device matches the one Discord uses."""
     # Minimize to tray
     def minimize_to_tray():
         root.withdraw()
-        if tray_icon:
-            tray_icon.visible = True
+        # Tray icon stays visible - no need to show/hide it
     tray_btn = ttk.Button(btn_frame, text="Minimize to Tray", command=minimize_to_tray)
     tray_btn.pack(side='left', padx=5)
     
@@ -440,8 +439,7 @@ or that the default system output device matches the one Discord uses."""
         root.deiconify()
         root.lift()
         root.focus_force()
-        if tray_icon:
-            tray_icon.visible = False
+        # Don't hide the tray icon - keep it visible like Discord/Telegram
     
     # Log display
     log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=10)
@@ -476,6 +474,7 @@ or that the default system output device matches the one Discord uses."""
             # Start tray icon in a separate thread
             tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
             tray_thread.start()
+            tray_icon.visible = True  # Make it visible from the start
             log_message("✅ Tray icon created successfully")
         else:
             log_message("❌ Failed to create tray icon")
