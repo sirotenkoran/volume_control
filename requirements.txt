@@ -1,4 +1,8 @@
 keyboard==0.13.5
-pyinstaller==6.3.0
-psutil==5.9.8
-pycaw==20230407 
+pycaw==20210701
+comtypes==1.1.14
+pystray==0.19.5
+Pillow==11.2.1
+six==1.17.0
+pyinstaller==6.14.1
+psutil==5.9.8 

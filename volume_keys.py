@@ -9,6 +9,17 @@ import msvcrt
 import glob
 from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
 import comtypes
+import threading
+import pystray
+from PIL import Image
+import ctypes
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+
+# Hide console window when running as exe
+if getattr(sys, 'frozen', False):
+    # Hide console window
+    ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
 
 def resource_path(relative_path):
     """Get the path to the resource, works both in script and .exe"""
@@ -27,6 +38,41 @@ def get_exe_directory():
     else:
         # If running as script
         return os.path.abspath(".")
+
+def create_tray_icon(on_restore_window):
+    global tray_icon
+    try:
+        icon_path = resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            image = Image.open(icon_path)
+        else:
+            image = Image.new('RGBA', (64, 64), (0, 120, 212, 255))
+        
+        def on_clicked(icon, item):
+            if str(item) == "Exit":
+                icon.visible = False
+                icon.stop()
+                os._exit(0)
+            elif str(item) == "Restore Window":
+                on_restore_window()
+        
+        menu = pystray.Menu(
+            pystray.MenuItem("Restore Window", on_clicked),
+            pystray.MenuItem("Exit", on_clicked)
+        )
+        
+        tray_icon = pystray.Icon(
+            "Discord Volume Control",
+            image,
+            f"Discord Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%",
+            menu
+        )
+        
+        return tray_icon
+        
+    except Exception as e:
+        log_message(f"Error creating tray icon: {e}")
+        return None
 
 def create_default_config(config_path):
     default_config = {
@@ -128,11 +174,21 @@ def run_bat(bat_path):
         print(f"File not found: {bat_path}")
 
 # Global variables
+def log_message(message):
+    """Add message to log display"""
+    global log_text
+    if log_text:
+        log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
+        log_text.see(tk.END)
+        log_text.update()
+
 volume_low = False
 config = None
 cached_sessions = []
 last_session_check = 0
 SESSION_CACHE_DURATION = 10  # Increased cache duration for better performance
+tray_icon = None
+log_text = None
 
 def get_current_discord_sessions():
     """Get current Discord sessions (with aggressive caching for performance)"""
@@ -251,57 +307,192 @@ def check_for_ctrl_c():
     except:
         return False
 
-def main():
-    global config
-    
-    print("""
-Warning!
-  This program only works for the default output device in Windows.
-  Make sure that in Discord settings you have selected 'Output device: Default',
-  or that the default system output device matches the one Discord uses.
-""")
-    
-    # Load configuration
-    config = load_config()
-    
-    # Check if Discord sessions are available at startup
-    initial_sessions = get_current_discord_sessions()
-    
-    if not initial_sessions:
-        print("❌ Discord audio sessions not found at startup!")
-        print("💡 Make sure Discord is running, playing audio and using the default device!")
-        print("   The program will continue running and check for sessions when you press the hotkey.")
+def show_tray_icon(on_restore_window):
+    icon_path = resource_path("icon.ico")
+    if os.path.exists(icon_path):
+        image = Image.open(icon_path)
     else:
-        print(f"\n✅ Found {len(initial_sessions)} Discord audio sessions at startup:")
-        for i, session_info in enumerate(initial_sessions):
-            print(f"  {i+1}. PID: {session_info['pid']}")
-    
-    print(f"\n🎵 Volume Control started!")
-    print(f"Hotkey: {config['hotkey'].upper()}")
-    print(f"Target: Discord sessions (cached for instant response)")
-    print(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
-    print("Ctrl+C (in console) - Exit")
-    
-    # Bind hotkey to volume toggle function
-    keyboard.add_hotkey(config['hotkey'], lambda: toggle_volume_pycaw())
+        image = Image.new('RGBA', (64, 64), (0, 120, 212, 255))
+    def on_clicked(icon, item):
+        if str(item) == "Exit":
+            icon.stop()
+            os._exit(0)
+        elif str(item) == "Show Window":
+            on_restore_window()
+    def on_double_click(icon, item):
+        on_restore_window()
+    menu = pystray.Menu(
+        pystray.MenuItem("Show Window", on_clicked),
+        pystray.MenuItem("Exit", on_clicked)
+    )
+    tray_icon = pystray.Icon("Discord Volume Control", image, "Discord Volume Control", menu)
+    tray_icon.visible = True
+    tray_icon.run_detached()
+    tray_icon._listener._on_notify = lambda *a, **k: None  # suppress notification popups
+    tray_icon._on_click = lambda icon, button, pressed: on_restore_window() if pressed and button == 1 else None
+    return tray_icon
+
+def start_hotkey_listener(toggle_func, config):
+    keyboard.add_hotkey(config['hotkey'], toggle_func)
+
+def run_tray_icon():
+    """Run tray icon in a separate thread"""
+    global tray_icon
+    try:
+        if tray_icon:
+            tray_icon.run()
+    except Exception as e:
+        log_message(f"Error running tray icon: {e}")
+
+def gui_main():
+    global config, log_text, tray_icon
+    config = load_config()
+    root = tk.Tk()
+    root.title("Discord Volume Control")
+    root.geometry("600x700")
+    root.resizable(True, True)
+    root.minsize(500, 600)
     
     try:
-        # Keep the program running with focus-aware Ctrl+C detection
-        while True:
-            if check_for_ctrl_c():
-                break
-            time.sleep(0.1)  # Small delay to prevent high CPU usage
-    except KeyboardInterrupt:
+        icon_path = resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            root.iconbitmap(icon_path)
+    except:
         pass
-    finally:
-        print("\n👋 Program terminated")
-        
-        # Remove temporary files
-        try:
-            os.remove(lower_bat_path)
-            os.remove(full_bat_path)
-        except:
-            pass
+    
+    # Configure grid weights
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    
+    # Main frame
+    main_frame = ttk.Frame(root, padding=20)
+    main_frame.grid(row=0, column=0, sticky='nsew')
+    main_frame.columnconfigure(1, weight=1)
+    
+    # Title
+    title_label = ttk.Label(main_frame, text="Discord Volume Control", font=('Arial', 16, 'bold'))
+    title_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))
+    
+    # Warning about default device
+    warning_frame = ttk.LabelFrame(main_frame, text="⚠️ Important", padding=10)
+    warning_frame.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+    warning_text = """This program only works for the default output device in Windows.
+Make sure that in Discord settings you have selected 'Output device: Default',
+or that the default system output device matches the one Discord uses."""
+    warning_label = ttk.Label(warning_frame, text=warning_text, foreground='red', wraplength=550)
+    warning_label.pack()
+    
+    # Settings frame
+    settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding=10)
+    settings_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+    settings_frame.columnconfigure(1, weight=1)
+    
+    # Hotkey
+    ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+    hotkey_var = tk.StringVar(value=config['hotkey'])
+    hotkey_entry = ttk.Entry(settings_frame, textvariable=hotkey_var, width=20)
+    hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
+    
+    # Low volume
+    ttk.Label(settings_frame, text="Low volume (0.0-1.0):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
+    low_var = tk.DoubleVar(value=config['low_volume'])
+    low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
+    low_entry.grid(row=1, column=1, sticky='w', pady=5)
+    
+    # High volume
+    ttk.Label(settings_frame, text="High volume (0.0-1.0):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+    high_var = tk.DoubleVar(value=config['high_volume'])
+    high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
+    high_entry.grid(row=2, column=1, sticky='w', pady=5)
+    
+    # App name
+    ttk.Label(settings_frame, text="App name:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    app_var = tk.StringVar(value=config['app_name'])
+    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
+    app_entry.grid(row=3, column=1, sticky='w', pady=5)
+    
+    # Buttons frame
+    btn_frame = ttk.Frame(main_frame)
+    btn_frame.grid(row=3, column=0, columnspan=2, pady=20)
+    
+    # Save button
+    def save():
+        config['hotkey'] = hotkey_var.get()
+        config['low_volume'] = float(low_var.get())
+        config['high_volume'] = float(high_var.get())
+        config['app_name'] = app_var.get()
+        save_config(config)
+        log_message("✅ Configuration saved!")
+        messagebox.showinfo("Saved", "Configuration saved!")
+    save_btn = ttk.Button(btn_frame, text="Save Settings", command=save)
+    save_btn.pack(side='left', padx=5)
+    
+    # Minimize to tray
+    def minimize_to_tray():
+        root.withdraw()
+        if tray_icon:
+            tray_icon.visible = True
+    tray_btn = ttk.Button(btn_frame, text="Minimize to Tray", command=minimize_to_tray)
+    tray_btn.pack(side='left', padx=5)
+    
+    # Restore from tray
+    def restore_from_tray():
+        root.deiconify()
+        root.lift()
+        root.focus_force()
+        if tray_icon:
+            tray_icon.visible = False
+    
+    # Log display
+    log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=10)
+    log_frame.grid(row=4, column=0, columnspan=2, sticky='nsew', pady=(0, 10))
+    log_frame.columnconfigure(0, weight=1)
+    log_frame.rowconfigure(0, weight=1)
+    
+    log_text = scrolledtext.ScrolledText(log_frame, height=15, width=70)
+    log_text.grid(row=0, column=0, sticky='nsew')
+    
+    # Initial log messages
+    log_message("🎵 Discord Volume Control started!")
+    log_message(f"Hotkey: {config['hotkey'].upper()}")
+    log_message(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
+    log_message("Target: Discord sessions (cached for instant response)")
+    
+    # Check initial Discord sessions
+    initial_sessions = get_current_discord_sessions()
+    if not initial_sessions:
+        log_message("❌ Discord audio sessions not found at startup!")
+        log_message("💡 Make sure Discord is running, playing audio and using the default device!")
+        log_message("   The program will continue running and check for sessions when you press the hotkey.")
+    else:
+        log_message(f"✅ Found {len(initial_sessions)} Discord audio sessions at startup:")
+        for i, session_info in enumerate(initial_sessions):
+            log_message(f"  {i+1}. PID: {session_info['pid']}")
+    
+    # Create tray icon ONCE and run in background
+    if tray_icon is None:
+        tray_icon = create_tray_icon(restore_from_tray)
+        if tray_icon:
+            # Start tray icon in a separate thread
+            tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
+            tray_thread.start()
+            log_message("✅ Tray icon created successfully")
+        else:
+            log_message("❌ Failed to create tray icon")
+    
+    # Handle window close - minimize to tray instead of exiting
+    def on_closing():
+        minimize_to_tray()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    # Start hotkey listener in background
+    threading.Thread(target=lambda: start_hotkey_listener(toggle_volume_pycaw, config), daemon=True).start()
+    
+    root.mainloop()
+
+def main():
+    gui_main()
 
 if __name__ == "__main__":
     main() 
