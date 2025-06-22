@@ -5,6 +5,7 @@ import keyboard
 import time
 import json
 import tempfile
+import msvcrt
 
 def resource_path(relative_path):
     """Get the path to the resource, works both in script and .exe"""
@@ -124,6 +125,20 @@ def toggle_volume(lower_bat_path, full_bat_path):
         run_bat(lower_bat_path)
         volume_low = True
 
+def check_for_ctrl_c():
+    """Checks if Ctrl+C is pressed only when console is focused"""
+    try:
+        # Check if there's input available in the console
+        if msvcrt.kbhit():
+            # Get the key pressed
+            key = msvcrt.getch()
+            # Check for Ctrl+C (ASCII 3)
+            if key == b'\x03':
+                return True
+        return False
+    except:
+        return False
+
 def main():
     # Load configuration
     config = load_config()
@@ -135,15 +150,20 @@ def main():
     print(f"Hotkey: {config['hotkey'].upper()}")
     print(f"Application: {config['app_name']}")
     print(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
-    print("Ctrl+C - Exit")
+    print("Ctrl+C (in console) - Exit")
     
     # Bind hotkey to volume toggle function
     keyboard.add_hotkey(config['hotkey'], lambda: toggle_volume(lower_bat_path, full_bat_path))
     
     try:
-        # Keep the program running
-        keyboard.wait('ctrl+c')
+        # Keep the program running with focus-aware Ctrl+C detection
+        while True:
+            if check_for_ctrl_c():
+                break
+            time.sleep(0.1)  # Small delay to prevent high CPU usage
     except KeyboardInterrupt:
+        pass
+    finally:
         print("\n👋 Program terminated")
         
         # Remove temporary files
