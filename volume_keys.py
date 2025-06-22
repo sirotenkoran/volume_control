@@ -6,6 +6,9 @@ import time
 import json
 import tempfile
 import msvcrt
+import glob
+from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
+import comtypes
 
 def resource_path(relative_path):
     """Get the path to the resource, works both in script and .exe"""
@@ -71,21 +74,37 @@ def load_config():
         return default_config
 
 def create_temp_bat_files(config):
-    """Creates temporary BAT files with settings from the configuration"""
+    """Creates temporary BAT files using multiple approaches"""
     nircmd_path = resource_path("nircmd.exe")
     
-    # Add chcp 65001 for UTF-8 support
-    lower_bat_content = f'''@echo off
-chcp 65001 >nul
-"{nircmd_path}" setappvolume "{config['app_name']}" {config['low_volume']}
-echo Volume of {config['app_name']} lowered to {int(config['low_volume'] * 100)}%
-'''
+    print("🎯 Используем комбинированный подход для управления Discord...")
     
-    full_bat_content = f'''@echo off
-chcp 65001 >nul
-"{nircmd_path}" setappvolume "{config['app_name']}" {config['high_volume']}
-echo Volume of {config['app_name']} restored to {int(config['high_volume'] * 100)}%
-'''
+    # Approach 1: Try multiple Discord app name variations
+    discord_variations = [
+        "Discord.exe",
+        "Discord",
+        "Discord (1)",
+        "Discord.exe (1)",
+        "Discord (2)",
+        "Discord.exe (2)"
+    ]
+    
+    # Approach 2: Also try system volume control as backup
+    lower_bat_content = '@echo off\nchcp 65001 >nul\n'
+    full_bat_content = '@echo off\nchcp 65001 >nul\n'
+    
+    # Try app-specific control first
+    for variation in discord_variations:
+        lower_bat_content += f'"{nircmd_path}" setappvolume "{variation}" {config["low_volume"]}\n'
+        lower_bat_content += f'echo Volume of {variation} lowered to {int(config["low_volume"] * 100)}%\n'
+        full_bat_content += f'"{nircmd_path}" setappvolume "{variation}" {config["high_volume"]}\n'
+        full_bat_content += f'echo Volume of {variation} restored to {int(config["high_volume"] * 100)}%\n'
+    
+    # Add system volume control as backup (this affects all audio)
+    # lower_bat_content += f'"{nircmd_path}" setsysvolume {int(config["low_volume"] * 65535)}\n'
+    # lower_bat_content += f'echo System volume lowered to {int(config["low_volume"] * 100)}%\n'
+    # full_bat_content += f'"{nircmd_path}" setsysvolume {int(config["high_volume"] * 65535)}\n'
+    # full_bat_content += f'echo System volume restored to {int(config["high_volume"] * 100)}%\n'
     
     # Create temporary files
     temp_dir = tempfile.gettempdir()
@@ -110,19 +129,21 @@ def run_bat(bat_path):
     else:
         print(f"File not found: {bat_path}")
 
-# Global variable to track the volume state
+# Global variables
 volume_low = False
+config = None
+discord_sessions = []
 
-def toggle_volume(lower_bat_path, full_bat_path):
-    """Toggles the volume"""
-    global volume_low
+def toggle_volume_pycaw():
+    """Toggle volume using pycaw for all Discord sessions"""
+    global volume_low, config, discord_sessions
     if volume_low:
         # Restore volume
-        run_bat(full_bat_path)
+        set_discord_volume(discord_sessions, config['high_volume'])
         volume_low = False
     else:
         # Lower volume
-        run_bat(lower_bat_path)
+        set_discord_volume(discord_sessions, config['low_volume'])
         volume_low = True
 
 def check_for_ctrl_c():
@@ -139,21 +160,78 @@ def check_for_ctrl_c():
     except:
         return False
 
+def print_discord_audio_sessions():
+    print("\n🔍 Поиск аудиосессий Discord через pycaw...")
+    sessions = AudioUtilities.GetAllSessions()
+    found = False
+    for session in sessions:
+        proc = session.Process
+        if proc and proc.name().lower().startswith('discord'):
+            found = True
+            print(f"Discord session: PID={proc.pid}, name={proc.name()}, id={session._ctl.GetSessionIdentifier()}")
+            try:
+                volume = session._ctl.QueryInterface(ISimpleAudioVolume).GetMasterVolume()
+                mute = session._ctl.QueryInterface(ISimpleAudioVolume).GetMute()
+                print(f"  Volume: {volume*100:.1f}%, Muted: {mute}")
+            except Exception as e:
+                print(f"  [Ошибка получения громкости: {e}]")
+    if not found:
+        print("Discord аудиосессии не найдены!")
+
+def get_discord_sessions():
+    """Get all Discord audio sessions using pycaw"""
+    sessions = AudioUtilities.GetAllSessions()
+    discord_sessions = []
+    for session in sessions:
+        proc = session.Process
+        if proc and proc.name().lower().startswith('discord'):
+            try:
+                volume_interface = session._ctl.QueryInterface(ISimpleAudioVolume)
+                discord_sessions.append({
+                    'session': session,
+                    'volume_interface': volume_interface,
+                    'pid': proc.pid,
+                    'name': proc.name(),
+                    'session_id': session._ctl.GetSessionIdentifier()
+                })
+            except Exception as e:
+                print(f"Ошибка получения интерфейса для {proc.name()}: {e}")
+    return discord_sessions
+
+def set_discord_volume(sessions, volume):
+    """Set volume for all Discord sessions"""
+    for i, session_info in enumerate(sessions):
+        try:
+            session_info['volume_interface'].SetMasterVolume(volume, None)
+            print(f"Установлена громкость {volume*100:.0f}% для Discord сессии {i+1} (PID: {session_info['pid']})")
+        except Exception as e:
+            print(f"Ошибка установки громкости для сессии {i+1}: {e}")
+
 def main():
+    global config, discord_sessions
+    
     # Load configuration
     config = load_config()
     
-    # Create temporary BAT files
-    lower_bat_path, full_bat_path = create_temp_bat_files(config)
+    # Get Discord sessions
+    discord_sessions = get_discord_sessions()
     
-    print("🎵 Volume Control started!")
+    if not discord_sessions:
+        print("❌ Discord аудиосессии не найдены!")
+        return
+    
+    print(f"✅ Найдено {len(discord_sessions)} Discord аудиосессий:")
+    for i, session_info in enumerate(discord_sessions):
+        print(f"  {i+1}. PID: {session_info['pid']}, ID: {session_info['session_id']}")
+    
+    print("\n🎵 Volume Control started!")
     print(f"Hotkey: {config['hotkey'].upper()}")
-    print(f"Application: {config['app_name']}")
+    print(f"Target: {len(discord_sessions)} Discord sessions via pycaw")
     print(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
     print("Ctrl+C (in console) - Exit")
     
     # Bind hotkey to volume toggle function
-    keyboard.add_hotkey(config['hotkey'], lambda: toggle_volume(lower_bat_path, full_bat_path))
+    keyboard.add_hotkey(config['hotkey'], lambda: toggle_volume_pycaw())
     
     try:
         # Keep the program running with focus-aware Ctrl+C detection
