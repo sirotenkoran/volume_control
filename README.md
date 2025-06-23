@@ -9,6 +9,13 @@ A lightweight application for quick volume control of any application using hotk
 - **Cross-Application** - Works with Discord, Chrome, Spotify, and any other app
 - **Portable** - Single .exe file, no installation required
 - **Custom Icon** - Professional appearance with custom icon
+- **Multi-Profile Support** - Create unlimited profiles with different settings
+- **Custom profile names** - Give each profile a descriptive name
+- **Simultaneous operation** - All profiles work at the same time
+- **Independent settings** - Each profile has its own:
+  - Hotkey (F9, F10, Ctrl+F1, etc.)
+  - Volume levels (low and high)
+  - Target applications
 
 ## 📦 Installation
 

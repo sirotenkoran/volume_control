@@ -56,12 +56,28 @@ def create_tray_icon(on_restore_window, on_exit):
             image = Image.open(icon_path)
         else:
             image = Image.new('RGBA', (64, 64), (0, 120, 212, 255))
-        # Use first profile for tray info
+        # Use first enabled profile for tray info
         config = load_config()
-        profile = config['profiles'][0]
-        hotkey = profile.get('hotkey', '').upper()
-        low = profile.get('low_volume', 0)
-        high = profile.get('high_volume', 0)
+        profiles = config.get('profiles', [])
+        if profiles:
+            # Find first enabled profile
+            first_enabled_profile = None
+            for profile in profiles:
+                if profile.get('enabled', True):
+                    first_enabled_profile = profile
+                    break
+            
+            if first_enabled_profile:
+                profile_name = first_enabled_profile.get('name', 'Profile 1')
+                hotkey = first_enabled_profile.get('hotkey', '').upper()
+                low = first_enabled_profile.get('low_volume', 0)
+                high = first_enabled_profile.get('high_volume', 0)
+                tooltip = f"App Volume Control\n{profile_name}: {hotkey}\nVolume: {low}% ↔ {high}%"
+            else:
+                tooltip = "App Volume Control\nNo enabled profiles"
+        else:
+            tooltip = "App Volume Control"
+        
         menu = pystray.Menu(
             pystray.MenuItem("Restore Window", on_clicked, default=True),
             pystray.MenuItem("Exit", on_clicked)
@@ -69,7 +85,7 @@ def create_tray_icon(on_restore_window, on_exit):
         tray_icon = pystray.Icon(
             "App Volume Control",
             image,
-            f"App Volume Control\nHotkey: {hotkey}\nVolume: {low}% ↔ {high}%",
+            tooltip,
             menu
         )
         return tray_icon
@@ -93,10 +109,13 @@ def create_default_config(config_path):
         "version": CONFIG_VERSION,
         "profiles": [
             {
+                "name": "Discord Profile",
                 "hotkey": "f9",
                 "low_volume": 20,
                 "high_volume": 100,
-                "apps": ["Discord.exe"]
+                "apps": ["Discord.exe"],
+                "enabled": True,
+                "priority": 1
             }
         ],
         "autostart": False,
@@ -109,10 +128,13 @@ def create_default_config(config_path):
 def migrate_old_config(old_config):
     if 'hotkey' in old_config:
         profile = {
+            "name": "Default Profile",
             "hotkey": old_config.get("hotkey", "f9"),
             "low_volume": old_config.get("low_volume", 20),
             "high_volume": old_config.get("high_volume", 100),
-            "apps": [old_config.get("app_name", "Discord.exe") or "system"]
+            "apps": [old_config.get("app_name", "Discord.exe") or "system"],
+            "enabled": True,
+            "priority": 1
         }
         return {"version": CONFIG_VERSION, "profiles": [profile], "autostart": False, "minimize_on_start": False}
     if 'autostart' not in old_config:
@@ -186,8 +208,10 @@ def save_config(config_data):
 
 profile_states = {}  # profile_index: {"volume_low": bool}
 
-# Helper: get sessions for a list of app names
+# Global hotkey mapping
+hotkey_profiles = {}  # hotkey: [profile_indices_in_priority_order]
 
+# Helper: get sessions for a list of app names
 def get_target_app_sessions_for_names(app_names):
     sessions = AudioUtilities.GetAllSessions()
     found = []
@@ -222,29 +246,36 @@ def set_system_volume(volume_percent):
 # Main toggle function for a profile
 def toggle_profile_volume(profile_index):
     config = load_config()
-    profile = config['profiles'][profile_index]
+    profiles = config.get('profiles', [])
+    if profile_index >= len(profiles):
+        return
+    
+    profile = profiles[profile_index]
+    profile_name = profile.get('name', f'Profile {profile_index+1}')
     state = profile_states.setdefault(profile_index, {"volume_low": False})
     apps = profile.get('apps', [])
     low = profile.get('low_volume', 20)
     high = profile.get('high_volume', 100)
     hotkey = profile.get('hotkey', '')
+    
     # System volume
     if any(t.lower() == 'system' for t in apps):
         if state["volume_low"]:
             set_system_volume(high)
-            log_message(f"[Profile {profile_index+1}] System volume restored to {high}% (Hotkey: {hotkey.upper()})")
+            log_message(f"[{profile_name}] System volume restored to {high}% (Hotkey: {hotkey.upper()})")
             state["volume_low"] = False
         else:
             set_system_volume(low)
-            log_message(f"[Profile {profile_index+1}] System volume lowered to {low}% (Hotkey: {hotkey.upper()})")
+            log_message(f"[{profile_name}] System volume lowered to {low}% (Hotkey: {hotkey.upper()})")
             state["volume_low"] = True
+    
     # App volumes
     app_targets = [t for t in apps if t.lower() != 'system']
     if app_targets:
         sessions = get_target_app_sessions_for_names(app_targets)
         if not sessions:
             if app_targets or not any(t.lower() == 'system' for t in apps):
-                log_message(f"[Profile {profile_index+1}] No sessions found for: {', '.join(app_targets)}")
+                log_message(f"[{profile_name}] No sessions found for: {', '.join(app_targets)}")
             return
         for s in sessions:
             try:
@@ -254,24 +285,75 @@ def toggle_profile_volume(profile_index):
                 else:
                     v.SetMasterVolume(low / 100.0, None)
             except Exception as e:
-                log_message(f"[Profile {profile_index+1}] Error setting volume for {s['name']}: {e}")
+                log_message(f"[{profile_name}] Error setting volume for {s['name']}: {e}")
         if state["volume_low"]:
-            log_message(f"[Profile {profile_index+1}] App volumes restored to {high}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+            log_message(f"[{profile_name}] App volumes restored to {high}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
             state["volume_low"] = False
         else:
-            log_message(f"[Profile {profile_index+1}] App volumes lowered to {low}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+            log_message(f"[{profile_name}] App volumes lowered to {low}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
             state["volume_low"] = True
 
 # Register all hotkeys for all profiles
 def register_all_profile_hotkeys():
+    global hotkey_profiles
     config = load_config()
-    for idx, profile in enumerate(config.get('profiles', [])):
+    profiles = config.get('profiles', [])
+    
+    # Clear previous mappings
+    hotkey_profiles.clear()
+    
+    # Group profiles by hotkey
+    for idx, profile in enumerate(profiles):
         hotkey = profile.get('hotkey', '')
-        if hotkey:
-            try:
-                keyboard.add_hotkey(hotkey, lambda idx=idx: toggle_profile_volume(idx))
-            except Exception as e:
-                log_message(f"Error registering hotkey '{hotkey}': {e}")
+        enabled = profile.get('enabled', True)
+        priority = profile.get('priority', 1)
+        
+        if hotkey and enabled:
+            if hotkey not in hotkey_profiles:
+                hotkey_profiles[hotkey] = []
+            hotkey_profiles[hotkey].append((idx, priority))
+    
+    # Sort each hotkey group by priority (higher priority LAST - so their settings don't get overwritten)
+    for hotkey in hotkey_profiles:
+        hotkey_profiles[hotkey].sort(key=lambda x: x[1], reverse=False)  # Lower priority first
+        hotkey_profiles[hotkey] = [idx for idx, _ in hotkey_profiles[hotkey]]
+    
+    # Register hotkeys
+    keyboard.unhook_all()
+    for hotkey in hotkey_profiles:
+        try:
+            keyboard.add_hotkey(hotkey, lambda h=hotkey: execute_hotkey_profiles(h))
+            profile_names = []
+            for idx in hotkey_profiles[hotkey]:
+                profile_name = profiles[idx].get('name', f'Profile {idx+1}')
+                profile_names.append(profile_name)
+            log_message(f"✅ Registered hotkey '{hotkey.upper()}' for profiles: {', '.join(profile_names)}")
+        except Exception as e:
+            log_message(f"Error registering hotkey '{hotkey}': {e}")
+    
+    # Log disabled profiles
+    for idx, profile in enumerate(profiles):
+        hotkey = profile.get('hotkey', '')
+        enabled = profile.get('enabled', True)
+        if hotkey and not enabled:
+            profile_name = profile.get('name', f'Profile {idx+1}')
+            log_message(f"⏸️ Skipped disabled profile: {profile_name} (hotkey: {hotkey.upper()})")
+
+def execute_hotkey_profiles(hotkey):
+    """Execute all profiles for a given hotkey in priority order"""
+    if hotkey not in hotkey_profiles:
+        return
+    
+    profile_indices = hotkey_profiles[hotkey]
+    if not profile_indices:
+        return
+    
+    # Execute all profiles for this hotkey
+    for profile_index in profile_indices:
+        try:
+            toggle_profile_volume(profile_index)
+        except Exception as e:
+            log_message(f"❌ Error executing profile {profile_index}: {e}")
 
 # Global variables
 def log_message(message):
@@ -436,7 +518,9 @@ def show_tray_icon(on_restore_window):
     return tray_icon
 
 def start_hotkey_listener(toggle_func, config):
-    keyboard.add_hotkey(config['hotkey'], toggle_func)
+    # This function is no longer needed as we use register_all_profile_hotkeys()
+    # Keep it for backward compatibility but it doesn't do anything
+    pass
 
 def run_tray_icon():
     """Run tray icon in a separate thread"""
@@ -450,12 +534,11 @@ def run_tray_icon():
 def gui_main():
     global config, log_text, tray_icon
     config = load_config()
-    profile = config['profiles'][0]
     root = tk.Tk()
     root.title("App Volume Control")
-    root.geometry("600x700")
+    root.geometry("600x750")
     root.resizable(True, True)
-    root.minsize(500, 600)
+    root.minsize(500, 650)
     
     try:
         icon_path = resource_path("icon.ico")
@@ -484,9 +567,45 @@ def gui_main():
     warning_label = ttk.Label(warning_frame, text=warning_text, foreground='red', wraplength=550)
     warning_label.pack()
     
+    # --- PROFILE MANAGEMENT SECTION ---
+    profile_frame = ttk.LabelFrame(main_frame, text="Profile Management", padding=10)
+    profile_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+    profile_frame.columnconfigure(1, weight=1)
+    
+    # Profile selection
+    ttk.Label(profile_frame, text="Active Profile:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+    profile_var = tk.StringVar()
+    profile_combo = ttk.Combobox(profile_frame, textvariable=profile_var, state='readonly', width=30)
+    profile_combo.grid(row=0, column=1, sticky='w', pady=5)
+    
+    # Profile management buttons
+    profile_btn_frame = ttk.Frame(profile_frame)
+    profile_btn_frame.grid(row=0, column=2, sticky='w', padx=(10, 0), pady=5)
+    
+    add_profile_btn = ttk.Button(profile_btn_frame, text="Add Profile", width=12)
+    add_profile_btn.pack(side='left', padx=(0, 5))
+    
+    rename_profile_btn = ttk.Button(profile_btn_frame, text="Rename", width=12)
+    rename_profile_btn.pack(side='left', padx=(0, 5))
+    
+    delete_profile_btn = ttk.Button(profile_btn_frame, text="Delete Profile", width=12)
+    delete_profile_btn.pack(side='left')
+    
+    # Profile info display
+    profile_info_frame = ttk.Frame(profile_frame)
+    profile_info_frame.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(10, 0))
+    
+    # Enabled checkbox
+    enabled_var = tk.BooleanVar()
+    enabled_chk = ttk.Checkbutton(profile_info_frame, text="Profile Enabled", variable=enabled_var, command=lambda: on_enabled_changed())
+    enabled_chk.pack(side='left', padx=(0, 20))
+    
+    profile_info_label = ttk.Label(profile_info_frame, text="", foreground='#666', font=('Arial', 9))
+    profile_info_label.pack(side='left')
+    
     # Settings frame
     settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding=10)
-    settings_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+    settings_frame.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(0, 20))
     settings_frame.columnconfigure(1, weight=1)
     
     # --- Application selection function (moved above) ---
@@ -551,7 +670,7 @@ def gui_main():
     ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
     hotkey_row = ttk.Frame(settings_frame)
     hotkey_row.grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
-    hotkey_var = tk.StringVar(value=profile.get('hotkey', ''))
+    hotkey_var = tk.StringVar()
     hotkey_entry = ttk.Entry(hotkey_row, textvariable=hotkey_var, width=20)
     hotkey_entry.pack(side='left')
     hotkey_hint = ttk.Label(hotkey_row, text="Click and press a hotkey. Press Esc to clear.", foreground='#888')
@@ -656,27 +775,35 @@ def gui_main():
     
     # Low volume
     ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-    low_var = tk.IntVar(value=profile.get('low_volume', 20))
+    low_var = tk.IntVar()
     low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
     low_entry.grid(row=1, column=1, sticky='w', pady=5)
     
     # High volume
     ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-    high_var = tk.IntVar(value=profile.get('high_volume', 100))
+    high_var = tk.IntVar()
     high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
     high_entry.grid(row=2, column=1, sticky='w', pady=5)
     
+    # Priority
+    ttk.Label(settings_frame, text="Priority:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    priority_var = tk.IntVar()
+    priority_entry = ttk.Entry(settings_frame, textvariable=priority_var, width=20)
+    priority_entry.grid(row=3, column=1, sticky='w', pady=5)
+    priority_hint = ttk.Label(settings_frame, text="Higher numbers = higher priority (1-100). Higher priority profiles execute LAST to override others.", foreground='#888')
+    priority_hint.grid(row=3, column=2, sticky='w', pady=5, padx=(10, 0))
+    
     # App/Apps field (single entry, comment below)
-    ttk.Label(settings_frame, text="App/Apps:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    ttk.Label(settings_frame, text="App/Apps:").grid(row=4, column=0, sticky='w', pady=5, padx=(0, 10))
     app_row = ttk.Frame(settings_frame)
-    app_row.grid(row=3, column=1, columnspan=2, sticky='w', pady=5)
-    app_var = tk.StringVar(value=','.join(profile.get('apps', [])))
+    app_row.grid(row=4, column=1, columnspan=2, sticky='w', pady=5)
+    app_var = tk.StringVar()
     app_entry = ttk.Entry(app_row, textvariable=app_var, width=30)
     app_entry.pack(side='left')
     choose_btn = ttk.Button(app_row, text="Choose...", command=lambda: choose_app_multi(app_var))
     choose_btn.pack(side='left', padx=(6,0))
     app_comment = ttk.Label(settings_frame, text="Comma-separated. Use 'system' for system volume, or specify one or more app process names (e.g. Discord.exe,chrome.exe)", foreground='#888', wraplength=350, justify='left')
-    app_comment.grid(row=4, column=1, columnspan=2, sticky='w', pady=(0,10))
+    app_comment.grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
 
     def choose_app_multi(app_var):
         import psutil
@@ -780,16 +907,239 @@ def gui_main():
         pattern = r'^(ctrl\+|alt\+|shift\+|win\+)*([a-z0-9]|f([1-9]|1[0-9]|2[0-4]))(\+([a-z0-9]|ctrl|alt|shift|win|f([1-9]|1[0-9]|2[0-4])))*$'
         return bool(re.fullmatch(pattern, hotkey))
 
+    # --- Profile management functions ---
+    def update_profile_list():
+        """Update the profile dropdown list"""
+        profiles = config.get('profiles', [])
+        profile_names = []
+        for i, profile in enumerate(profiles):
+            name = profile.get('name', f'Profile {i+1}')
+            profile_names.append(name)
+        profile_combo['values'] = profile_names
+        if profile_names and not profile_var.get():
+            profile_var.set(profile_names[0])
+        elif profile_names and profile_var.get() not in profile_names:
+            profile_var.set(profile_names[0])
+
+    def get_current_profile_index():
+        """Get the index of the currently selected profile"""
+        current = profile_var.get()
+        if not current:
+            return 0
+        profiles = config.get('profiles', [])
+        for i, profile in enumerate(profiles):
+            if profile.get('name', f'Profile {i+1}') == current:
+                return i
+        return 0
+
+    def load_profile_to_ui(profile_index):
+        """Load profile data into UI fields"""
+        profiles = config.get('profiles', [])
+        if profile_index >= len(profiles):
+            return
+        
+        profile = profiles[profile_index]
+        hotkey_var.set(profile.get('hotkey', ''))
+        low_var.set(profile.get('low_volume', 20))
+        high_var.set(profile.get('high_volume', 100))
+        priority_var.set(profile.get('priority', 1))
+        app_var.set(','.join(profile.get('apps', [])))
+        enabled_var.set(profile.get('enabled', True))
+        
+        # Update profile info
+        hotkey = profile.get('hotkey', '').upper()
+        low = profile.get('low_volume', 20)
+        high = profile.get('high_volume', 100)
+        priority = profile.get('priority', 1)
+        apps = ', '.join(profile.get('apps', []))
+        enabled_status = "ENABLED" if profile.get('enabled', True) else "DISABLED"
+        info_text = f"Status: {enabled_status} | Priority: {priority} | Hotkey: {hotkey} | Volume: {low}% ↔ {high}% | Apps: {apps}"
+        profile_info_label.config(text=info_text)
+
+    def add_new_profile():
+        """Add a new profile"""
+        profiles = config.get('profiles', [])
+        new_profile = {
+            "name": f"Profile {len(profiles) + 1}",
+            "hotkey": "",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": [],
+            "enabled": True,
+            "priority": 1
+        }
+        profiles.append(new_profile)
+        config['profiles'] = profiles
+        save_config(config)
+        
+        update_profile_list()
+        profile_var.set(new_profile['name'])
+        load_profile_to_ui(len(profiles) - 1)
+        
+        # Re-register hotkeys for ALL profiles
+        keyboard.unhook_all()
+        register_all_profile_hotkeys()
+        
+        log_message(f"✅ Added new profile: {new_profile['name']}")
+
+    def on_enabled_changed():
+        """Handle profile enabled/disabled state change"""
+        current_index = get_current_profile_index()
+        profiles = config.get('profiles', [])
+        if current_index >= len(profiles):
+            return
+        
+        profile = profiles[current_index]
+        old_enabled = profile.get('enabled', True)
+        new_enabled = enabled_var.get()
+        
+        if old_enabled != new_enabled:
+            profile['enabled'] = new_enabled
+            save_config(config)
+            
+            # Re-register hotkeys for ALL profiles
+            keyboard.unhook_all()
+            register_all_profile_hotkeys()
+            
+            # Update profile info
+            load_profile_to_ui(current_index)
+            
+            profile_name = profile.get('name', f'Profile {current_index + 1}')
+            status = "enabled" if new_enabled else "disabled"
+            log_message(f"✅ {profile_name} {status}")
+            
+            # Trigger settings changed to enable save button
+            settings_changed()
+
+    def delete_current_profile():
+        """Delete the currently selected profile"""
+        current_index = get_current_profile_index()
+        profiles = config.get('profiles', [])
+        
+        if len(profiles) <= 1:
+            messagebox.showwarning("Cannot Delete", "Cannot delete the last profile. At least one profile must remain.")
+            return
+        
+        profile_name = profiles[current_index].get('name', f'Profile {current_index + 1}')
+        if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{profile_name}'?"):
+            return
+        
+        # Remove the profile
+        old_hotkey = profiles[current_index].get('hotkey', '')
+        profiles.pop(current_index)
+        config['profiles'] = profiles
+        save_config(config)
+        
+        # Re-register hotkeys for ALL profiles
+        keyboard.unhook_all()
+        register_all_profile_hotkeys()
+        
+        # Update UI
+        update_profile_list()
+        if current_index >= len(profiles):
+            current_index = len(profiles) - 1
+        if profiles:
+            profile_var.set(profiles[current_index].get('name', f'Profile {current_index + 1}'))
+            load_profile_to_ui(current_index)
+        
+        log_message(f"✅ Deleted profile: {profile_name}")
+
+    def rename_current_profile():
+        """Rename the currently selected profile"""
+        current_index = get_current_profile_index()
+        profiles = config.get('profiles', [])
+        if current_index >= len(profiles):
+            return
+        
+        current_name = profiles[current_index].get('name', f'Profile {current_index + 1}')
+        
+        # Create rename dialog
+        rename_win = tk.Toplevel(root)
+        rename_win.title("Rename Profile")
+        rename_win.geometry("300x120")
+        rename_win.transient(root)
+        rename_win.grab_set()
+        
+        # Center the dialog
+        rename_win.update_idletasks()
+        x = root.winfo_x() + (root.winfo_width() // 2) - (300 // 2)
+        y = root.winfo_y() + (root.winfo_height() // 2) - (120 // 2)
+        rename_win.geometry(f"300x120+{x}+{y}")
+        
+        ttk.Label(rename_win, text="Enter new profile name:").pack(pady=(10, 5))
+        name_var = tk.StringVar(value=current_name)
+        name_entry = ttk.Entry(rename_win, textvariable=name_var, width=30)
+        name_entry.pack(pady=5)
+        name_entry.focus_set()
+        name_entry.select_range(0, tk.END)
+        
+        def on_rename():
+            new_name = name_var.get().strip()
+            if not new_name:
+                messagebox.showwarning("Invalid Name", "Profile name cannot be empty.")
+                return
+            
+            # Check for duplicate names
+            existing_names = [p.get('name', f'Profile {i+1}') for i, p in enumerate(profiles) if i != current_index]
+            if new_name in existing_names:
+                messagebox.showwarning("Duplicate Name", f"Profile name '{new_name}' already exists.")
+                return
+            
+            profiles[current_index]['name'] = new_name
+            config['profiles'] = profiles
+            save_config(config)
+            
+            update_profile_list()
+            profile_var.set(new_name)
+            load_profile_to_ui(current_index)
+            
+            rename_win.destroy()
+            log_message(f"✅ Renamed profile to: {new_name}")
+        
+        def on_cancel():
+            rename_win.destroy()
+        
+        btn_frame = ttk.Frame(rename_win)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Rename", command=on_rename).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side='left', padx=5)
+        
+        # Keyboard bindings
+        rename_win.bind('<Return>', lambda e: on_rename())
+        rename_win.bind('<Escape>', lambda e: on_cancel())
+
+    def on_profile_changed(*args):
+        """Handle profile selection change"""
+        current_index = get_current_profile_index()
+        load_profile_to_ui(current_index)
+        settings_changed()
+
     # --- Save() function now above button ---
     def save():
         try:
+            current_index = get_current_profile_index()
+            profiles = config.get('profiles', [])
+            if current_index >= len(profiles):
+                return
+            
+            profile = profiles[current_index]
             old_hotkey = profile.get('hotkey', '')
             old_apps = profile.get('apps', [])
+            old_enabled = profile.get('enabled', True)
+            old_priority = profile.get('priority', 1)
 
             new_hotkey = hotkey_var.get().strip()
             new_low_vol = int(low_var.get())
             new_high_vol = int(high_var.get())
+            new_priority = int(priority_var.get())
             new_apps = [t.strip() for t in app_var.get().split(',') if t.strip()]
+            new_enabled = enabled_var.get()
+            
+            # Validate priority
+            if new_priority < 1 or new_priority > 100:
+                messagebox.showerror("Priority Error", "Priority must be between 1 and 100.")
+                priority_var.set(old_priority)
+                return
             
             if not new_hotkey:
                 profile['hotkey'] = ''
@@ -801,7 +1151,9 @@ def gui_main():
                 profile['hotkey'] = new_hotkey
             profile['low_volume'] = new_low_vol
             profile['high_volume'] = new_high_vol
+            profile['priority'] = new_priority
             profile['apps'] = new_apps
+            profile['enabled'] = new_enabled
 
             save_config(config)
 
@@ -812,42 +1164,58 @@ def gui_main():
                 last_session_check = 0
                 log_message(f"✅ App/Apps changed to: {', '.join(new_apps)}")
 
-            # Dynamically update the hotkey if it changed
-            if old_hotkey.lower() != new_hotkey.lower():
+            # Re-register hotkeys if hotkey, priority, or enabled status changed
+            if old_hotkey.lower() != new_hotkey.lower() or old_enabled != new_enabled or old_priority != new_priority:
                 try:
-                    if old_hotkey:
-                        try:
-                            keyboard.remove_hotkey(old_hotkey)
-                        except Exception:
-                            pass
-                    if new_hotkey:
-                        keyboard.add_hotkey(new_hotkey, lambda idx=0: toggle_profile_volume(idx))
-                    log_message(f"✅ Hotkey updated to: {new_hotkey.upper()}")
+                    # Re-register all hotkeys for all profiles
+                    keyboard.unhook_all()
+                    register_all_profile_hotkeys()
+                    log_message(f"✅ Hotkeys updated for all profiles")
                 except Exception as e:
-                    log_message(f"❌ Error updating hotkey: {e}")
-                    messagebox.showwarning("Hotkey Error", f"Could not update hotkey.\nPlease restart the app.\nError: {e}")
+                    log_message(f"❌ Error updating hotkeys: {e}")
+                    messagebox.showwarning("Hotkey Error", f"Could not update hotkeys.\nPlease restart the app.\nError: {e}")
             
-            # Update tray icon tooltip with new values
-            if tray_icon:
-                tray_icon.title = f"App Volume Control\nHotkey: {profile['hotkey'].upper()}\nVolume: {profile['low_volume']}% ↔ {profile['high_volume']}%"
+            # Update profile info
+            load_profile_to_ui(current_index)
+            
+            # Update tray icon tooltip with first enabled profile values
+            if tray_icon and len(profiles) > 0:
+                # Find first enabled profile for tray icon
+                first_enabled_profile = None
+                for p in profiles:
+                    if p.get('enabled', True):
+                        first_enabled_profile = p
+                        break
+                
+                if first_enabled_profile:
+                    profile_name = first_enabled_profile.get('name', 'Profile 1')
+                    tray_icon.title = f"App Volume Control\n{profile_name}: {first_enabled_profile['hotkey'].upper()}\nVolume: {first_enabled_profile['low_volume']}% ↔ {first_enabled_profile['high_volume']}%"
+                else:
+                    tray_icon.title = "App Volume Control\nNo enabled profiles"
 
             log_message("✅ Configuration saved!")
             save_btn.config(state='disabled')
 
         except ValueError:
-            log_message("❌ Error saving: Invalid number for volume.")
-            messagebox.showerror("Error", "Could not save settings: please enter a valid number for volume (e.g., 20).")
+            log_message("❌ Error saving: Invalid number for volume or priority.")
+            messagebox.showerror("Error", "Could not save settings: please enter valid numbers for volume (e.g., 20) and priority (1-100).")
         except Exception as e:
             log_message(f"❌ Error saving settings: {e}")
             messagebox.showerror("Error", f"Could not save settings: {e}")
 
     # --- Save Settings button now right in settings_frame ---
     save_btn = ttk.Button(settings_frame, text="Save Settings", command=save)
-    save_btn.grid(row=5, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
+    save_btn.grid(row=6, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
 
     # --- Automatic enable/disable Save Settings button ---
     def settings_changed(*args):
         # Check if values in fields are different from current config
+        current_index = get_current_profile_index()
+        profiles = config.get('profiles', [])
+        if current_index >= len(profiles):
+            return
+        
+        profile = profiles[current_index]
         changed = False
         try:
             if hotkey_var.get().strip() != profile.get('hotkey', ''):
@@ -856,7 +1224,11 @@ def gui_main():
                 changed = True
             elif int(high_var.get()) != profile.get('high_volume', 100):
                 changed = True
+            elif int(priority_var.get()) != profile.get('priority', 1):
+                changed = True
             elif [t.strip() for t in app_var.get().split(',') if t.strip()] != profile.get('apps', []):
+                changed = True
+            elif enabled_var.get() != profile.get('enabled', True):
                 changed = True
         except Exception:
             changed = True
@@ -866,13 +1238,18 @@ def gui_main():
     hotkey_var.trace_add('write', settings_changed)
     low_var.trace_add('write', settings_changed)
     high_var.trace_add('write', settings_changed)
+    priority_var.trace_add('write', settings_changed)
     app_var.trace_add('write', settings_changed)
-    # Call immediately after start for correct button state
-    settings_changed()
+    
+    # Bind profile management
+    add_profile_btn.config(command=add_new_profile)
+    rename_profile_btn.config(command=rename_current_profile)
+    delete_profile_btn.config(command=delete_current_profile)
+    profile_var.trace_add('write', on_profile_changed)
 
     # Log display (move above tray_btn)
     log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=6)
-    log_frame.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
+    log_frame.grid(row=7, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
     log_text = scrolledtext.ScrolledText(log_frame, height=10)
@@ -883,11 +1260,11 @@ def gui_main():
         root.withdraw()
         # Tray icon stays visible - no need to show/hide it
     tray_btn = ttk.Button(main_frame, text="Minimize to Tray", command=minimize_to_tray)
-    tray_btn.grid(row=7, column=0, columnspan=2, pady=(0, 12))
+    tray_btn.grid(row=8, column=0, columnspan=2, pady=(0, 12))
 
     # Update main_frame row weights for resizing
-    main_frame.rowconfigure(6, weight=1)
-    main_frame.rowconfigure(7, weight=0)
+    main_frame.rowconfigure(7, weight=1)
+    main_frame.rowconfigure(8, weight=0)
     
     # Restore from tray
     def restore_from_tray():
@@ -907,24 +1284,52 @@ def gui_main():
         root.destroy()
         os._exit(0)
     
+    # Initialize profile management
+    update_profile_list()
+    if config.get('profiles', []):
+        load_profile_to_ui(0)
+    
     # Initial log messages
     log_message("🎵 App Volume Control started!")
-    log_message(f"Hotkey: {profile.get('hotkey', '').upper()}")
-    log_message(f"Volume: {profile.get('low_volume', 20)}% ↔ {profile.get('high_volume', 100)}%")
-    log_message(f"App/Apps: {', '.join(profile.get('apps', []))}")
+    if config.get('profiles', []):
+        profiles = config['profiles']
+        enabled_profiles = [p for p in profiles if p.get('enabled', True)]
+        
+        if enabled_profiles:
+            log_message(f"✅ {len(enabled_profiles)} enabled profile(s):")
+            for i, profile in enumerate(enabled_profiles):
+                profile_name = profile.get('name', f'Profile {i+1}')
+                hotkey = profile.get('hotkey', '').upper()
+                log_message(f"  {i+1}. {profile_name} ({hotkey})")
+        else:
+            log_message("⚠️ No enabled profiles found")
+        
+        # Show first enabled profile details
+        if enabled_profiles:
+            first_profile = enabled_profiles[0]
+            profile_name = first_profile.get('name', 'Profile 1')
+            log_message(f"Active Profile: {profile_name} ({first_profile.get('hotkey', '').upper()})")
+            log_message(f"Volume: {first_profile.get('low_volume', 20)}% ↔ {first_profile.get('high_volume', 100)}%")
+            log_message(f"App/Apps: {', '.join(first_profile.get('apps', []))}")
     
-    # Check initial app sessions
-    initial_sessions = get_target_app_sessions_for_names(profile.get('apps', []))
-    if not initial_sessions:
-        # Only log if not just system
-        if not (len(profile.get('apps', [])) == 1 and profile.get('apps', [])[0].lower() == 'system'):
-            log_message(f"❌ No sessions found at startup for: {', '.join(profile.get('apps', []))}!")
-        log_message("💡 Make sure the app is running, playing audio and using the default device!")
-        log_message("   The program will continue checking when you press the hotkey.")
-    else:
-        log_message(f"✅ Found {len(initial_sessions)} sessions at startup:")
-        for i, session_info in enumerate(initial_sessions):
-            log_message(f"  {i+1}. PID: {session_info['pid']}")
+    # Check initial app sessions for first enabled profile
+    if config.get('profiles', []):
+        profiles = config['profiles']
+        enabled_profiles = [p for p in profiles if p.get('enabled', True)]
+        
+        if enabled_profiles:
+            first_profile = enabled_profiles[0]
+            initial_sessions = get_target_app_sessions_for_names(first_profile.get('apps', []))
+            if not initial_sessions:
+                # Only log if not just system
+                if not (len(first_profile.get('apps', [])) == 1 and first_profile.get('apps', [])[0].lower() == 'system'):
+                    log_message(f"❌ No sessions found at startup for: {', '.join(first_profile.get('apps', []))}!")
+                log_message("💡 Make sure the app is running, playing audio and using the default device!")
+                log_message("   The program will continue checking when you press the hotkey.")
+            else:
+                log_message(f"✅ Found {len(initial_sessions)} sessions at startup:")
+                for i, session_info in enumerate(initial_sessions):
+                    log_message(f"  {i+1}. PID: {session_info['pid']}")
     
     # Create tray icon ONCE and run in background using show_tray_icon
     if tray_icon is None:
@@ -941,7 +1346,8 @@ def gui_main():
     root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # Start hotkey listener in background
-    threading.Thread(target=lambda: start_hotkey_listener(toggle_volume_pycaw, config), daemon=True).start()
+    # Hotkeys are now registered via register_all_profile_hotkeys() in main()
+    # No need to start a separate thread for this
     
     # Start the listener thread that will show the window if another instance is run
     start_show_window_listener(root, restore_from_tray)
@@ -962,7 +1368,7 @@ def gui_main():
             log_message(f"❌ Autostart error: {e}")
     autostart_var = tk.BooleanVar(value=config.get('autostart', False) or is_in_startup())
     autostart_chk = ttk.Checkbutton(settings_frame, text="Start with Windows", variable=autostart_var, command=on_autostart_toggle)
-    autostart_chk.grid(row=6, column=0, columnspan=2, sticky='w', pady=(10, 0))
+    autostart_chk.grid(row=7, column=0, columnspan=2, sticky='w', pady=(10, 0))
 
     # --- MINIMIZE ON START CHECKBOX ---
     def on_minimize_toggle():
@@ -971,11 +1377,14 @@ def gui_main():
         save_config(config)
     minimize_var = tk.BooleanVar(value=config.get('minimize_on_start', False))
     minimize_chk = ttk.Checkbutton(settings_frame, text="Minimize to tray on startup", variable=minimize_var, command=on_minimize_toggle)
-    minimize_chk.grid(row=7, column=0, columnspan=2, sticky='w', pady=(0, 0))
+    minimize_chk.grid(row=8, column=0, columnspan=2, sticky='w', pady=(0, 0))
 
     # Автоматическое сворачивание в трей при запуске, если включено
     if config.get('minimize_on_start', False):
         root.after(100, lambda: minimize_to_tray())
+    
+    # Call immediately after start for correct button state
+    settings_changed()
     
     root.mainloop()
 

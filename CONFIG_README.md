@@ -1,74 +1,296 @@
-# ⚙️ Настройка Volume Control
+# Configuration Guide
 
-## 📝 Конфигурационный файл
+## Multi-Profile System
 
-Программа использует файл `config.json` для настройки. Вы можете создать этот файл рядом с .exe файлом для изменения настроек.
+The application now supports multiple profiles, each with independent settings and hotkeys. You can enable or disable individual profiles to control which ones are active. **Multiple profiles can share the same hotkey** - they will execute in priority order.
 
-### Пример config.json:
+### Profile Structure
+
+Each profile contains:
 ```json
 {
+    "name": "Profile Name",
     "hotkey": "f9",
-    "low_volume": 0.2,
-    "high_volume": 1.0,
-    "app_name": "Discord.exe",
-    "show_console": false
+    "low_volume": 20,
+    "high_volume": 100,
+    "apps": ["Discord.exe", "system"],
+    "enabled": true,
+    "priority": 1
 }
 ```
 
-### Параметры:
+### Configuration File Format
 
-- **hotkey** - Горячая клавиша (по умолчанию: "f9")
-  - Примеры: "f9", "f10", "ctrl+f9", "alt+f9"
-  
-- **low_volume** - Громкость в пониженном состоянии (по умолчанию: 0.2 = 20%)
-  - Значения от 0.0 до 1.0 (0% - 100%)
-  
-- **high_volume** - Громкость в восстановленном состоянии (по умолчанию: 1.0 = 100%)
-  - Значения от 0.0 до 1.0 (0% - 100%)
-  
-- **app_name** - Имя процесса приложения (по умолчанию: "Discord.exe")
-  - Примеры: "Discord.exe", "chrome.exe", "spotify.exe"
-  
-- **show_console** - Показывать ли консоль (по умолчанию: false)
-
-## 🎯 Примеры конфигураций
-
-### Для Discord с F10:
 ```json
 {
-    "hotkey": "f10",
-    "low_volume": 0.1,
-    "high_volume": 1.0,
+    "version": 2,
+    "profiles": [
+        {
+            "name": "Discord Profile",
+            "hotkey": "f9",
+            "low_volume": 5,
+            "high_volume": 100,
+            "apps": ["Discord.exe"],
+            "enabled": true,
+            "priority": 2
+        },
+        {
+            "name": "Discord + Chrome",
+            "hotkey": "f9",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": ["Discord.exe", "chrome.exe"],
+            "enabled": true,
+            "priority": 1
+        },
+        {
+            "name": "System Volume",
+            "hotkey": "f10",
+            "low_volume": 10,
+            "high_volume": 80,
+            "apps": ["system"],
+            "enabled": true,
+            "priority": 1
+        }
+    ],
+    "autostart": false,
+    "minimize_on_start": false
+}
+```
+
+## Profile Settings
+
+### Name
+- **Custom name** for the profile (e.g., "Discord", "Gaming", "Work")
+- **Must be unique** - no duplicate names allowed
+- **Optional** - defaults to "Profile 1", "Profile 2", etc.
+
+### Hotkey
+- **Keyboard combination** to trigger the profile
+- **Examples**: `f9`, `f10`, `ctrl+f1`, `alt+f2`
+- **Can be shared** - multiple profiles can use the same hotkey
+- **Can be empty** - profile won't respond to hotkeys
+
+### Volume Levels
+- **Low volume**: Volume when hotkey is pressed (0-100%)
+- **High volume**: Volume when hotkey is pressed again (0-100%)
+- **Default**: 20% low, 100% high
+
+### Applications
+- **List of target applications** or "system"
+- **Comma-separated**: `["Discord.exe", "chrome.exe"]`
+- **System volume**: `["system"]`
+- **Mixed**: `["Discord.exe", "system", "chrome.exe"]`
+
+### Enabled
+- **Profile status**: `true` = active, `false` = disabled
+- **Only enabled profiles** respond to hotkeys
+- **Disabled profiles** are saved but inactive
+- **Default**: `true` (enabled)
+
+### Priority
+- **Execution order**: Higher priority profiles execute first (1-100)
+- **Conflict resolution**: When multiple profiles share the same hotkey
+- **Range**: 1 (lowest priority) to 100 (highest priority)
+- **Default**: 1
+- **Note**: Higher numbers = higher priority (100 executes before 1)
+
+## Priority System
+
+### How It Works
+When multiple profiles use the same hotkey, they execute in **priority order**:
+
+1. **Higher priority** profiles execute first (higher numbers = higher priority)
+2. **All profiles** for the hotkey are executed
+3. **No conflicts** - each profile manages its own state
+
+### Example Scenario
+```json
+{
+    "name": "Discord Only",
+    "hotkey": "f9",
+    "low_volume": 5,
+    "high_volume": 100,
+    "apps": ["Discord.exe"],
+    "priority": 50
+},
+{
+    "name": "Discord + Chrome",
+    "hotkey": "f9", 
+    "low_volume": 20,
+    "high_volume": 100,
+    "apps": ["Discord.exe", "chrome.exe"],
+    "priority": 10
+}
+```
+
+**When F9 is pressed:**
+1. **"Discord Only"** executes first (priority 50 - higher)
+2. **"Discord + Chrome"** executes second (priority 10 - lower)
+3. **Result**: Discord gets set to 5% or 100%, Chrome gets set to 20% or 100%
+
+### Best Practices
+- **Use priority 1-20** for general profiles
+- **Use priority 21-50** for important profiles
+- **Use priority 51-80** for critical profiles
+- **Use priority 81-100** for emergency/critical profiles
+- **Test combinations** to ensure desired behavior
+- **Remember**: Higher numbers = higher priority
+
+## Profile Management
+
+### Enabling/Disabling Profiles
+- **Checkbox in GUI**: "Profile Enabled" checkbox for each profile
+- **Immediate effect**: Changes apply instantly
+- **Hotkey registration**: Only enabled profiles register hotkeys
+- **Visual feedback**: Status shown in profile info
+
+### Profile Status Display
+- **Enabled profiles**: Show "ENABLED" status
+- **Disabled profiles**: Show "DISABLED" status
+- **Priority shown**: Displayed in profile info
+- **Tray icon**: Shows first enabled profile info
+- **Log messages**: Only enabled profiles are logged
+
+## Global Settings
+
+### Autostart
+- **Start with Windows**: Automatically start the application on boot
+- **Stored in**: Windows Startup folder
+- **Independent of profiles**: Applies to the entire application
+
+### Minimize on Start
+- **Minimize to tray**: Start the application minimized
+- **Independent of profiles**: Applies to the entire application
+
+## Migration from Old Config
+
+The application automatically migrates old single-profile configurations:
+
+**Old format:**
+```json
+{
+    "hotkey": "f9",
+    "low_volume": 20,
+    "high_volume": 100,
     "app_name": "Discord.exe"
 }
 ```
 
-### Для Chrome с Ctrl+F9:
+**Becomes:**
 ```json
 {
-    "hotkey": "ctrl+f9",
-    "low_volume": 0.3,
-    "high_volume": 0.8,
-    "app_name": "chrome.exe"
+    "version": 2,
+    "profiles": [
+        {
+            "name": "Default Profile",
+            "hotkey": "f9",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": ["Discord.exe"],
+            "enabled": true,
+            "priority": 1
+        }
+    ],
+    "autostart": false,
+    "minimize_on_start": false
 }
 ```
 
-### Для Spotify с Alt+F9:
+## Usage Examples
+
+### Gaming Setup (High Priority)
 ```json
 {
-    "hotkey": "alt+f9",
-    "low_volume": 0.15,
-    "high_volume": 0.9,
-    "app_name": "spotify.exe"
+    "name": "Gaming",
+    "hotkey": "ctrl+f1",
+    "low_volume": 15,
+    "high_volume": 90,
+    "apps": ["Discord.exe", "steam.exe", "teamspeak3.exe"],
+    "enabled": true,
+    "priority": 80
 }
 ```
 
-## 📁 Размещение файла
+### Work Setup (Medium Priority)
+```json
+{
+    "name": "Work",
+    "hotkey": "ctrl+f2",
+    "low_volume": 10,
+    "high_volume": 70,
+    "apps": ["system", "chrome.exe", "slack.exe"],
+    "enabled": true,
+    "priority": 50
+}
+```
 
-Поместите `config.json` в ту же папку, где находится `volume_keys.exe`.
+### Music Setup (Low Priority)
+```json
+{
+    "name": "Music",
+    "hotkey": "f12",
+    "low_volume": 5,
+    "high_volume": 100,
+    "apps": ["spotify.exe", "youtube.exe"],
+    "enabled": false,
+    "priority": 10
+}
+```
 
-## 🔄 Изменения в реальном времени
+### Multiple Profiles Same Hotkey
+```json
+{
+    "name": "Discord Critical",
+    "hotkey": "f9",
+    "low_volume": 5,
+    "high_volume": 100,
+    "apps": ["Discord.exe"],
+    "enabled": true,
+    "priority": 90
+},
+{
+    "name": "All Apps",
+    "hotkey": "f9",
+    "low_volume": 20,
+    "high_volume": 100,
+    "apps": ["Discord.exe", "chrome.exe", "spotify.exe"],
+    "enabled": true,
+    "priority": 20
+}
+```
 
-- Изменения в config.json применяются при следующем запуске программы
-- Если config.json отсутствует, используются значения по умолчанию
-- При ошибке в config.json программа продолжит работу с дефолтными настройками 
+## Tips
+
+1. **Use descriptive names** - Makes it easier to identify profiles
+2. **Enable only needed profiles** - Reduces hotkey conflicts and improves performance
+3. **Set appropriate priorities** - Higher numbers = higher priority (100 > 1)
+4. **Test combinations** - Some hotkey combinations may not work
+5. **Group related apps** - Put apps that should be controlled together in one profile
+6. **Use system volume** - Include "system" for overall volume control
+7. **Disable unused profiles** - Keep only active profiles enabled
+8. **Plan priority hierarchy** - Think about which profiles should execute first
+9. **Use priority ranges** - 1-20 (general), 21-50 (important), 51-80 (critical), 81-100 (emergency)
+
+## Troubleshooting
+
+### Profile Issues
+- **Profile not responding**: Check if profile is enabled and hotkey is set
+- **Wrong volume levels**: Verify low_volume and high_volume values (0-100)
+- **Apps not found**: Ensure app names are correct (e.g., `Discord.exe`)
+
+### Priority Issues
+- **Wrong execution order**: Check priority values (higher numbers = higher priority)
+- **Conflicting behavior**: Review which profiles share the same hotkey
+- **Unexpected results**: Test priority combinations in isolation
+- **Priority range**: Must be between 1 and 100
+
+### Enabled/Disabled Issues
+- **No profiles working**: Check if any profiles are enabled
+- **Hotkey conflicts**: Ensure enabled profiles have unique hotkeys
+- **Profile not showing**: Verify profile is enabled in GUI
+
+### Configuration Issues
+- **Invalid JSON**: Check for syntax errors in config.json
+- **Missing profiles**: Ensure "profiles" array exists
+- **Version mismatch**: Update to latest version for new features 

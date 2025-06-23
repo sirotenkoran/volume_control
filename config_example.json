@@ -1,7 +1,52 @@
 {
-    "hotkey": "f9",
-    "low_volume": 0.2,
-    "high_volume": 1.0,
-    "app_name": "Discord.exe",
-    "show_console": false
+    "version": 2,
+    "profiles": [
+        {
+            "name": "Discord Profile",
+            "hotkey": "f9",
+            "low_volume": 5,
+            "high_volume": 100,
+            "apps": ["Discord.exe"],
+            "enabled": true,
+            "priority": 80
+        },
+        {
+            "name": "Discord + Chrome",
+            "hotkey": "f9",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": ["Discord.exe", "chrome.exe"],
+            "enabled": true,
+            "priority": 30
+        },
+        {
+            "name": "System Volume",
+            "hotkey": "f10",
+            "low_volume": 10,
+            "high_volume": 80,
+            "apps": ["system"],
+            "enabled": true,
+            "priority": 50
+        },
+        {
+            "name": "Browser Apps",
+            "hotkey": "ctrl+f1",
+            "low_volume": 15,
+            "high_volume": 90,
+            "apps": ["chrome.exe", "firefox.exe", "msedge.exe"],
+            "enabled": false,
+            "priority": 20
+        },
+        {
+            "name": "Gaming Apps",
+            "hotkey": "ctrl+f2",
+            "low_volume": 25,
+            "high_volume": 95,
+            "apps": ["steam.exe", "discord.exe", "teamspeak3.exe"],
+            "enabled": true,
+            "priority": 70
+        }
+    ],
+    "autostart": false,
+    "minimize_on_start": false
 } 
