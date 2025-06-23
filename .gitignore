@@ -48,4 +48,24 @@ Thumbs.db
 
 # Project specific
 config.json
-*.exe 
+*.exe
+
+# Old files (from refactor)
+volume_keys.py
+volume_keys.spec
+
+# Logs
+app_volume_control.log
+
+# Legacy NIRCMD files (no longer used)
+nircmd.exe
+nircmdc.exe
+NirCmd.chm
+# Note: build.bat and create_release.bat are kept in repository
+
+# User-specific files
+config.json
+app_volume_control.log
+
+# Development files (not needed for end users)
+test_refactor.py 

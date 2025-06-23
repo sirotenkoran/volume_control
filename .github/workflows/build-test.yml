@@ -1,0 +1,48 @@
+name: Build Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          
+      - name: Build executable (test)
+        run: |
+          pyinstaller --onefile --windowed --icon=icon.ico --name=AppVolumeControl --add-data "icon.ico;." main.py
+          
+      - name: Verify executable
+        run: |
+          if (Test-Path "dist/AppVolumeControl.exe") {
+            Write-Host "✅ Build test successful"
+            $size = (Get-Item "dist/AppVolumeControl.exe").Length / 1MB
+            Write-Host "📦 Executable size: $([math]::Round($size, 2)) MB"
+          } else {
+            Write-Host "❌ Build test failed"
+            exit 1
+          }
+          
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: AppVolumeControl-Test
+          path: dist/AppVolumeControl.exe
+          retention-days: 7 

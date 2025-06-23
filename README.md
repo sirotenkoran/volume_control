@@ -19,10 +19,11 @@ A lightweight application for quick volume control of any application using hotk
 
 ## 📦 Installation
 
-### Option 1: Download Pre-built Release
-1. Download `AppVolumeControl.exe` from the releases
-2. Place it in any folder
-3. Run the program - it will create `config.json` automatically
+### Option 1: Download Pre-built Release (Recommended)
+1. Go to [Releases](https://github.com/yourusername/volume_control/releases)
+2. Download the latest `AppVolumeControl.exe`
+3. Place it in any folder
+4. Run the program - it will create `config.json` automatically
 
 ### Option 2: Build from Source
 1. Clone this repository
@@ -33,80 +34,126 @@ A lightweight application for quick volume control of any application using hotk
 6. Run build script: `build.bat`
 7. Find `AppVolumeControl.exe` in the `dist` folder
 
+## 🏷️ Releases
+
+### For Users
+- **Latest Release**: Always available in the [Releases](https://github.com/yourusername/volume_control/releases) section
+- **Automatic Updates**: New releases are automatically built and published when we create version tags
+- **No Installation**: Just download and run the .exe file
+
+### For Developers
+- **Automated Builds**: Every push to main/master triggers a build test
+- **Release Process**: 
+  1. Make your changes
+  2. Test locally: `python main.py`
+  3. Commit and push: `git push origin main`
+  4. Create a release tag: `git tag v1.2.3 && git push origin v1.2.3`
+  5. GitHub Actions automatically builds and publishes the release
+
+### Build Status
+![Build Test](https://github.com/yourusername/volume_control/workflows/Build%20Test/badge.svg)
+![Build and Release](https://github.com/yourusername/volume_control/workflows/Build%20and%20Release/badge.svg)
+
 ## ⚙️ Configuration
 
-The program automatically creates `config.json` on first run. Edit it to customize:
+The program automatically creates `config.json` on first run. The new version uses a multi-profile system:
 
 ```json
 {
-    "hotkey": "f9",
-    "low_volume": 0.2,
-    "high_volume": 1.0,
-    "app_name": "Discord.exe",
-    "show_console": false
+    "version": 2,
+    "profiles": [
+        {
+            "name": "Discord Profile",
+            "hotkey": "f9",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": ["Discord.exe"],
+            "enabled": true,
+            "priority": 1,
+            "invert": false
+        }
+    ],
+    "autostart": false,
+    "minimize_on_start": false
 }
 ```
 
-### Parameters:
-- **hotkey** - Hotkey combination (default: "f9")
-  - Examples: "f9", "f10", "ctrl+f9", "alt+f9"
-- **low_volume** - Volume in lowered state (default: 0.2 = 20%)
-  - Values from 0.0 to 1.0 (0% - 100%)
-- **high_volume** - Volume in restored state (default: 1.0 = 100%)
-  - Values from 0.0 to 1.0 (0% - 100%)
-- **app_name** - Target application process name (default: "Discord.exe")
-  - Examples: "Discord.exe", "chrome.exe", "spotify.exe"
+### Profile Parameters:
+- **name** - Profile display name
+- **hotkey** - Hotkey combination (e.g., "f9", "ctrl+f10")
+- **low_volume** - Volume percentage when lowered (0-100)
+- **high_volume** - Volume percentage when restored (0-100)
+- **apps** - List of target applications or ["system"] for system volume
+- **enabled** - Whether the profile is active
+- **priority** - Execution priority (1-100, higher = higher priority)
+- **invert** - Invert the toggle logic
 
 ## 🎯 Usage Examples
 
-### Discord with F10:
+### Discord with F9:
 ```json
 {
-    "hotkey": "f10",
-    "low_volume": 0.1,
-    "high_volume": 1.0,
-    "app_name": "Discord.exe"
+    "name": "Discord",
+    "hotkey": "f9",
+    "low_volume": 10,
+    "high_volume": 100,
+    "apps": ["Discord.exe"],
+    "enabled": true,
+    "priority": 1
 }
 ```
 
 ### Chrome with Ctrl+F9:
 ```json
 {
+    "name": "Chrome",
     "hotkey": "ctrl+f9",
-    "low_volume": 0.3,
-    "high_volume": 0.8,
-    "app_name": "chrome.exe"
+    "low_volume": 30,
+    "high_volume": 80,
+    "apps": ["chrome.exe"],
+    "enabled": true,
+    "priority": 2
 }
 ```
 
-### Spotify with Alt+F9:
+### System Volume with F10:
 ```json
 {
-    "hotkey": "alt+f9",
-    "low_volume": 0.15,
-    "high_volume": 0.9,
-    "app_name": "spotify.exe"
+    "name": "System",
+    "hotkey": "f10",
+    "low_volume": 15,
+    "high_volume": 90,
+    "apps": ["system"],
+    "enabled": true,
+    "priority": 1
 }
 ```
 
 ## 🔧 How It Works
 
 1. **Hotkey Detection** - Uses keyboard library for global hotkey monitoring
-2. **Volume Control** - Leverages nircmd.exe for application-specific volume control
+2. **Volume Control** - Leverages pycaw for application-specific volume control
 3. **Configuration** - Reads settings from external config.json file
-4. **Temporary Files** - Creates temporary BAT files for volume commands
+4. **Multi-Profile** - Supports multiple profiles with priority-based execution
 
 ## 📁 Project Structure
 
 ```
 volume_control/
-├── volume_keys.py          # Main application code
-├── requirements.txt        # Python dependencies
+├── main.py                 # Application entry point
+├── config.py              # Configuration management
+├── audio.py               # Audio session and volume control
+├── hotkeys.py             # Hotkey registration and execution
+├── autostart.py           # Windows startup integration
+├── single_instance.py     # Single instance behavior
+├── utils.py               # Common utility functions
+├── gui.py                 # Main GUI application
+├── requirements.txt       # Python dependencies
 ├── build.bat              # Build script
 ├── icon.ico               # Application icon
-├── nircmd.exe            # Volume control utility
-├── README.md             # This file
-├── CONFIG_README.md      # Configuration guide
+├── README.md              # This file
+├── CONFIG_README.md       # Configuration guide
+├── REFACTOR_README.md     # Technical documentation
 └── .gitignore           # Git ignore rules
 ```
 
@@ -115,52 +162,48 @@ volume_control/
 ### Prerequisites
 - Python 3.8+
 - PyInstaller
-- keyboard library
+- All dependencies from requirements.txt
 
 ### Build Process
-1. Ensure all dependencies are installed
+1. Ensure all dependencies are installed: `pip install -r requirements.txt`
 2. Place your `icon.ico` file in the project root
 3. Run `build.bat`
 4. Check `dist/` folder for the compiled executable
 
+### Creating Releases
+For developers who want to create releases:
+
+1. **Using the automated script** (recommended):
+   ```bash
+   create_release.bat v1.2.3
+   ```
+   This script will:
+   - Check for uncommitted changes
+   - Build the executable
+   - Create a git tag
+   - Push the tag to trigger GitHub Actions
+   - Provide next steps
+
+2. **Manual process**:
+   ```bash
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+
+### Running from Source
+```bash
+python main.py
+```
+
+### Testing
+```bash
+python test_refactor.py
+```
+
 ### Dependencies
 - `keyboard==0.13.5` - Global hotkey detection
-- `pyinstaller==6.14.1` - Executable packaging
-
-## ⚠️ Important Notes
-
-- **Administrator Rights** - May require admin privileges for volume control
-- **Antivirus** - Some antivirus software may flag nircmd.exe
-- **Game Compatibility** - Avoid using during competitive games with anti-cheat
-- **Application Names** - Use exact process names (e.g., "Discord.exe", not "Discord")
-
-## 📝 License
-
-This project uses:
-- [nircmd](https://www.nirsoft.net/utils/nircmd.html) by Nir Sofer
-- [keyboard](https://github.com/boppreh/keyboard) Python library
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## 🐛 Troubleshooting
-
-### Program doesn't work
-- Ensure target application is running
-- Check if config.json is valid JSON
-- Run as administrator if needed
-
-### Volume doesn't change
-- Verify application process name in config.json
-- Check if nircmd.exe is not blocked by antivirus
-- Ensure application is not muted in Windows mixer
-
-### Hotkey conflicts
-- Try different hotkey combinations
-- Avoid F1-F12 if used by other applications
-- Use modifier keys (Ctrl, Alt) for unique combinations 
+- `pycaw` - Windows audio control
+- `pystray` - System tray icon
+- `Pillow` - Image processing
+- `psutil` - Process management
+- `pywin32` - Windows API access
