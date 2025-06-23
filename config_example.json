@@ -4,11 +4,12 @@
         {
             "name": "Discord Profile",
             "hotkey": "f9",
-            "low_volume": 5,
+            "low_volume": 20,
             "high_volume": 100,
             "apps": ["Discord.exe"],
             "enabled": true,
-            "priority": 80
+            "priority": 1,
+            "invert": false
         },
         {
             "name": "Discord + Chrome",
@@ -45,6 +46,36 @@
             "apps": ["steam.exe", "discord.exe", "teamspeak3.exe"],
             "enabled": true,
             "priority": 70
+        },
+        {
+            "name": "Chrome Profile",
+            "hotkey": "f10",
+            "low_volume": 10,
+            "high_volume": 80,
+            "apps": ["chrome.exe"],
+            "enabled": true,
+            "priority": 1,
+            "invert": false
+        },
+        {
+            "name": "System Volume",
+            "hotkey": "f11",
+            "low_volume": 30,
+            "high_volume": 100,
+            "apps": ["system"],
+            "enabled": true,
+            "priority": 1,
+            "invert": false
+        },
+        {
+            "name": "Inverted Discord",
+            "hotkey": "f12",
+            "low_volume": 20,
+            "high_volume": 100,
+            "apps": ["Discord.exe"],
+            "enabled": true,
+            "priority": 1,
+            "invert": true
         }
     ],
     "autostart": false,

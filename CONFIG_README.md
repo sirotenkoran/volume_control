@@ -6,18 +6,31 @@ The application now supports multiple profiles, each with independent settings a
 
 ### Profile Structure
 
-Each profile contains:
+Each profile in the `profiles` array has the following structure:
+
 ```json
 {
     "name": "Profile Name",
     "hotkey": "f9",
     "low_volume": 20,
     "high_volume": 100,
-    "apps": ["Discord.exe", "system"],
+    "apps": ["Discord.exe", "chrome.exe"],
     "enabled": true,
-    "priority": 1
+    "priority": 1,
+    "invert": false
 }
 ```
+
+### Fields Explanation
+
+- **`name`** (string): Display name for the profile
+- **`hotkey`** (string): Keyboard shortcut to trigger the profile (e.g., "f9", "ctrl+f10")
+- **`low_volume`** (number): Volume percentage when in "low" state (1-100)
+- **`high_volume`** (number): Volume percentage when in "high" state (1-100)
+- **`apps`** (array): List of target applications or "system" for system volume
+- **`enabled`** (boolean): Whether the profile is active
+- **`priority`** (number): Priority level (1-100) for profiles sharing the same hotkey
+- **`invert`** (boolean): Invert the toggle logic (see Invert Logic section below)
 
 ### Configuration File Format
 
@@ -294,3 +307,111 @@ The application automatically migrates old single-profile configurations:
 - **Invalid JSON**: Check for syntax errors in config.json
 - **Missing profiles**: Ensure "profiles" array exists
 - **Version mismatch**: Update to latest version for new features 
+
+## Invert Logic
+
+The `invert` field allows you to reverse the normal toggle behavior:
+
+### Normal Logic (invert: false)
+- First press: Sets volume to `low_volume`
+- Second press: Sets volume to `high_volume`
+- Third press: Sets volume to `low_volume`
+- And so on...
+
+### Inverted Logic (invert: true)
+- First press: Sets volume to `high_volume`
+- Second press: Sets volume to `low_volume`
+- Third press: Sets volume to `high_volume`
+- And so on...
+
+### Use Cases for Invert Logic
+
+1. **Consistent State**: When you want all profiles with the same hotkey to always be in the same state
+2. **Emergency Override**: Create an inverted profile that always sets high volume when others set low
+3. **Different Behavior**: Some apps work better with inverted logic
+
+### Example: Discord + Chrome with Same Hotkey
+
+```json
+{
+  "profiles": [
+    {
+      "name": "Discord Normal",
+      "hotkey": "f9",
+      "low_volume": 20,
+      "high_volume": 100,
+      "apps": ["Discord.exe"],
+      "invert": false
+    },
+    {
+      "name": "Chrome Inverted", 
+      "hotkey": "f9",
+      "low_volume": 20,
+      "high_volume": 100,
+      "apps": ["chrome.exe"],
+      "invert": true
+    }
+  ]
+}
+```
+
+**Result**: When you press F9:
+- Discord goes to 20% (low) while Chrome goes to 100% (high)
+- Next press: Discord goes to 100% (high) while Chrome goes to 20% (low)
+- Both apps are always in opposite states!
+
+## App Names
+
+- Use exact process names (e.g., "Discord.exe", "chrome.exe")
+- Use "system" for system volume control
+- Multiple apps can be specified: `["Discord.exe", "chrome.exe", "system"]`
+
+## Hotkey Format
+
+- Function keys: "f1", "f2", ..., "f24"
+- Modifiers: "ctrl+f9", "alt+f10", "shift+f11", "ctrl+alt+f12"
+- Single keys: "a", "b", "1", "2", etc.
+
+## Examples
+
+### Basic Discord Control
+```json
+{
+  "name": "Discord",
+  "hotkey": "f9",
+  "low_volume": 20,
+  "high_volume": 100,
+  "apps": ["Discord.exe"],
+  "enabled": true,
+  "priority": 1,
+  "invert": false
+}
+```
+
+### System Volume Control
+```json
+{
+  "name": "System",
+  "hotkey": "f10", 
+  "low_volume": 30,
+  "high_volume": 100,
+  "apps": ["system"],
+  "enabled": true,
+  "priority": 1,
+  "invert": false
+}
+```
+
+### Multiple Apps
+```json
+{
+  "name": "Gaming Apps",
+  "hotkey": "f11",
+  "low_volume": 10,
+  "high_volume": 80,
+  "apps": ["Discord.exe", "Teams.exe", "chrome.exe"],
+  "enabled": true,
+  "priority": 1,
+  "invert": false
+}
+``` 

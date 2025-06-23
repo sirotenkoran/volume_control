@@ -115,7 +115,8 @@ def create_default_config(config_path):
                 "high_volume": 100,
                 "apps": ["Discord.exe"],
                 "enabled": True,
-                "priority": 1
+                "priority": 1,
+                "invert": False
             }
         ],
         "autostart": False,
@@ -134,7 +135,8 @@ def migrate_old_config(old_config):
             "high_volume": old_config.get("high_volume", 100),
             "apps": [old_config.get("app_name", "Discord.exe") or "system"],
             "enabled": True,
-            "priority": 1
+            "priority": 1,
+            "invert": False
         }
         return {"version": CONFIG_VERSION, "profiles": [profile], "autostart": False, "minimize_on_start": False}
     if 'autostart' not in old_config:
@@ -206,10 +208,13 @@ def save_config(config_data):
 
 # --- HOTKEY REGISTRATION AND PROFILE HANDLING ---
 
-profile_states = {}  # profile_index: {"volume_low": bool}
-
 # Global hotkey mapping
 hotkey_profiles = {}  # hotkey: [profile_indices_in_priority_order]
+
+# Global state per hotkey (not per profile)
+hotkey_states = {}  # hotkey: {"volume_low": bool}
+
+profile_states = {}  # profile_index: {"volume_low": bool}
 
 # Helper: get sessions for a list of app names
 def get_target_app_sessions_for_names(app_names):
@@ -244,7 +249,7 @@ def set_system_volume(volume_percent):
         return False
 
 # Main toggle function for a profile
-def toggle_profile_volume(profile_index):
+def toggle_profile_volume(profile_index, hotkey_state=None):
     config = load_config()
     profiles = config.get('profiles', [])
     if profile_index >= len(profiles):
@@ -252,22 +257,32 @@ def toggle_profile_volume(profile_index):
     
     profile = profiles[profile_index]
     profile_name = profile.get('name', f'Profile {profile_index+1}')
-    state = profile_states.setdefault(profile_index, {"volume_low": False})
     apps = profile.get('apps', [])
     low = profile.get('low_volume', 20)
     high = profile.get('high_volume', 100)
     hotkey = profile.get('hotkey', '')
+    invert = profile.get('invert', False)
+    
+    # Use provided hotkey state (shared across all profiles with same hotkey)
+    if hotkey_state is None:
+        hotkey_state = {"volume_low": False}
+    
+    # Determine target volume based on current state and invert setting
+    if invert:
+        # Inverted logic: when state is low, go to low (but this is actually high volume)
+        # when state is high, go to high (but this is actually low volume)
+        target_volume = low if hotkey_state["volume_low"] else high
+    else:
+        # Normal logic: when state is low, go to high; when state is high, go to low
+        target_volume = high if hotkey_state["volume_low"] else low
     
     # System volume
     if any(t.lower() == 'system' for t in apps):
-        if state["volume_low"]:
-            set_system_volume(high)
-            log_message(f"[{profile_name}] System volume restored to {high}% (Hotkey: {hotkey.upper()})")
-            state["volume_low"] = False
-        else:
-            set_system_volume(low)
-            log_message(f"[{profile_name}] System volume lowered to {low}% (Hotkey: {hotkey.upper()})")
-            state["volume_low"] = True
+        if set_system_volume(target_volume):
+            if invert:
+                log_message(f"[{profile_name}] System volume set to {target_volume}% (Inverted: {'low' if hotkey_state['volume_low'] else 'high'} state) (Hotkey: {hotkey.upper()})")
+            else:
+                log_message(f"[{profile_name}] System volume {'restored' if not hotkey_state['volume_low'] else 'lowered'} to {target_volume}% (Hotkey: {hotkey.upper()})")
     
     # App volumes
     app_targets = [t for t in apps if t.lower() != 'system']
@@ -280,18 +295,39 @@ def toggle_profile_volume(profile_index):
         for s in sessions:
             try:
                 v = s['volume_interface']
-                if state["volume_low"]:
-                    v.SetMasterVolume(high / 100.0, None)
-                else:
-                    v.SetMasterVolume(low / 100.0, None)
+                v.SetMasterVolume(target_volume / 100.0, None)
             except Exception as e:
                 log_message(f"[{profile_name}] Error setting volume for {s['name']}: {e}")
-        if state["volume_low"]:
-            log_message(f"[{profile_name}] App volumes restored to {high}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
-            state["volume_low"] = False
+        
+        if invert:
+            log_message(f"[{profile_name}] App volumes set to {target_volume}% for: {', '.join(app_targets)} (Inverted: {'low' if hotkey_state['volume_low'] else 'high'} state) (Hotkey: {hotkey.upper()})")
         else:
-            log_message(f"[{profile_name}] App volumes lowered to {low}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
-            state["volume_low"] = True
+            log_message(f"[{profile_name}] App volumes {'restored' if not hotkey_state['volume_low'] else 'lowered'} to {target_volume}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+
+def execute_hotkey_profiles(hotkey):
+    """Execute all profiles for a given hotkey in priority order"""
+    if hotkey not in hotkey_profiles:
+        return
+    
+    profile_indices = hotkey_profiles[hotkey]
+    if not profile_indices:
+        return
+    
+    # Get or create global state for this hotkey
+    if hotkey not in hotkey_states:
+        hotkey_states[hotkey] = {"volume_low": False}
+    
+    hotkey_state = hotkey_states[hotkey]
+    
+    # Execute all profiles for this hotkey
+    for profile_index in profile_indices:
+        try:
+            toggle_profile_volume(profile_index, hotkey_state)
+        except Exception as e:
+            log_message(f"❌ Error executing profile {profile_index}: {e}")
+    
+    # Update global state AFTER all profiles have been processed
+    hotkey_state["volume_low"] = not hotkey_state["volume_low"]
 
 # Register all hotkeys for all profiles
 def register_all_profile_hotkeys():
@@ -338,22 +374,6 @@ def register_all_profile_hotkeys():
         if hotkey and not enabled:
             profile_name = profile.get('name', f'Profile {idx+1}')
             log_message(f"⏸️ Skipped disabled profile: {profile_name} (hotkey: {hotkey.upper()})")
-
-def execute_hotkey_profiles(hotkey):
-    """Execute all profiles for a given hotkey in priority order"""
-    if hotkey not in hotkey_profiles:
-        return
-    
-    profile_indices = hotkey_profiles[hotkey]
-    if not profile_indices:
-        return
-    
-    # Execute all profiles for this hotkey
-    for profile_index in profile_indices:
-        try:
-            toggle_profile_volume(profile_index)
-        except Exception as e:
-            log_message(f"❌ Error executing profile {profile_index}: {e}")
 
 # Global variables
 def log_message(message):
@@ -599,6 +619,11 @@ def gui_main():
     enabled_var = tk.BooleanVar()
     enabled_chk = ttk.Checkbutton(profile_info_frame, text="Profile Enabled", variable=enabled_var, command=lambda: on_enabled_changed())
     enabled_chk.pack(side='left', padx=(0, 20))
+    
+    # Invert checkbox
+    invert_var = tk.BooleanVar()
+    invert_chk = ttk.Checkbutton(profile_info_frame, text="Invert Logic", variable=invert_var, command=lambda: on_invert_changed())
+    invert_chk.pack(side='left', padx=(0, 20))
     
     profile_info_label = ttk.Label(profile_info_frame, text="", foreground='#666', font=('Arial', 9))
     profile_info_label.pack(side='left')
@@ -945,6 +970,7 @@ def gui_main():
         priority_var.set(profile.get('priority', 1))
         app_var.set(','.join(profile.get('apps', [])))
         enabled_var.set(profile.get('enabled', True))
+        invert_var.set(profile.get('invert', False))
         
         # Update profile info
         hotkey = profile.get('hotkey', '').upper()
@@ -953,7 +979,8 @@ def gui_main():
         priority = profile.get('priority', 1)
         apps = ', '.join(profile.get('apps', []))
         enabled_status = "ENABLED" if profile.get('enabled', True) else "DISABLED"
-        info_text = f"Status: {enabled_status} | Priority: {priority} | Hotkey: {hotkey} | Volume: {low}% ↔ {high}% | Apps: {apps}"
+        invert_status = "INVERTED" if profile.get('invert', False) else "NORMAL"
+        info_text = f"Status: {enabled_status} | Logic: {invert_status} | Priority: {priority} | Hotkey: {hotkey} | Volume: {low}% ↔ {high}% | Apps: {apps}"
         profile_info_label.config(text=info_text)
 
     def add_new_profile():
@@ -966,7 +993,8 @@ def gui_main():
             "high_volume": 100,
             "apps": [],
             "enabled": True,
-            "priority": 1
+            "priority": 1,
+            "invert": False
         }
         profiles.append(new_profile)
         config['profiles'] = profiles
@@ -1007,6 +1035,31 @@ def gui_main():
             profile_name = profile.get('name', f'Profile {current_index + 1}')
             status = "enabled" if new_enabled else "disabled"
             log_message(f"✅ {profile_name} {status}")
+            
+            # Trigger settings changed to enable save button
+            settings_changed()
+
+    def on_invert_changed():
+        """Handle profile invert logic change"""
+        current_index = get_current_profile_index()
+        profiles = config.get('profiles', [])
+        if current_index >= len(profiles):
+            return
+        
+        profile = profiles[current_index]
+        old_invert = profile.get('invert', False)
+        new_invert = invert_var.get()
+        
+        if old_invert != new_invert:
+            profile['invert'] = new_invert
+            save_config(config)
+            
+            # Update profile info
+            load_profile_to_ui(current_index)
+            
+            profile_name = profile.get('name', f'Profile {current_index + 1}')
+            status = "inverted" if new_invert else "normal"
+            log_message(f"✅ {profile_name} logic: {status}")
             
             # Trigger settings changed to enable save button
             settings_changed()
@@ -1134,6 +1187,7 @@ def gui_main():
             new_priority = int(priority_var.get())
             new_apps = [t.strip() for t in app_var.get().split(',') if t.strip()]
             new_enabled = enabled_var.get()
+            new_invert = invert_var.get()
             
             # Validate priority
             if new_priority < 1 or new_priority > 100:
@@ -1154,6 +1208,7 @@ def gui_main():
             profile['priority'] = new_priority
             profile['apps'] = new_apps
             profile['enabled'] = new_enabled
+            profile['invert'] = new_invert
 
             save_config(config)
 
@@ -1229,6 +1284,8 @@ def gui_main():
             elif [t.strip() for t in app_var.get().split(',') if t.strip()] != profile.get('apps', []):
                 changed = True
             elif enabled_var.get() != profile.get('enabled', True):
+                changed = True
+            elif invert_var.get() != profile.get('invert', False):
                 changed = True
         except Exception:
             changed = True
