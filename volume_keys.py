@@ -7,7 +7,7 @@ import json
 import tempfile
 import msvcrt
 import glob
-from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
+from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume, IAudioEndpointVolume
 import comtypes
 import threading
 import pystray
@@ -22,6 +22,7 @@ import win32con
 import psutil
 import re
 from keyboard._canonical_names import normalize_name, all_modifiers
+from comtypes import CLSCTX_ALL, cast, POINTER
 
 # Hide console window when running as exe
 if getattr(sys, 'frozen', False):
@@ -54,143 +55,184 @@ def create_tray_icon(on_restore_window, on_exit):
             image = Image.open(icon_path)
         else:
             image = Image.new('RGBA', (64, 64), (0, 120, 212, 255))
-        
-        def on_clicked(icon, item):
-            if str(item) == "Exit":
-                on_exit()
-            elif str(item) == "Restore Window":
-                on_restore_window()
-        
+        # Use first profile for tray info
+        config = load_config()
+        profile = config['profiles'][0]
+        hotkey = profile.get('hotkey', '').upper()
+        low = profile.get('low_volume', 0)
+        high = profile.get('high_volume', 0)
         menu = pystray.Menu(
-            pystray.MenuItem("Restore Window", on_clicked, default=True),  # This makes it the left-click action
+            pystray.MenuItem("Restore Window", on_clicked, default=True),
             pystray.MenuItem("Exit", on_clicked)
         )
-        
         tray_icon = pystray.Icon(
             "App Volume Control",
             image,
-            f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {config['low_volume']}% ↔ {config['high_volume']}%",
+            f"App Volume Control\nHotkey: {hotkey}\nVolume: {low}% ↔ {high}%",
             menu
         )
-        
         return tray_icon
-        
     except Exception as e:
         log_message(f"Error creating tray icon: {e}")
         return None
 
+# --- CONFIG STRUCTURE UPDATE ---
+# New config format:
+# {
+#   "profiles": [
+#     {"hotkey": "f9", "low_volume": 20, "high_volume": 100, "apps": ["Discord.exe"]},
+#     {"hotkey": "f10", "low_volume": 10, "high_volume": 80, "apps": ["system"]}
+#   ]
+# }
+
+CONFIG_VERSION = 2
+
 def create_default_config(config_path):
     default_config = {
-        "hotkey": "f9",
-        "low_volume": 20,
-        "high_volume": 100,
-        "app_name": "Discord.exe",
-        "show_console": False,
-        "target_devices": "all",  # "all" or list of device names
-        "exclude_devices": []     # list of device names to exclude
+        "version": CONFIG_VERSION,
+        "profiles": [
+            {
+                "hotkey": "f9",
+                "low_volume": 20,
+                "high_volume": 100,
+                "apps": ["Discord.exe"]
+            }
+        ]
     }
-    # Save with comments in the form of comments (JSON does not support comments, but you can add a separate README file)
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(default_config, f, indent=4, ensure_ascii=False)
     print(f"Default configuration file created: {config_path}\nEdit it to customize the program!")
 
+def migrate_old_config(old_config):
+    # Detect old config by presence of 'hotkey' at root
+    if 'hotkey' in old_config:
+        profile = {
+            "hotkey": old_config.get("hotkey", "f9"),
+            "low_volume": old_config.get("low_volume", 20),
+            "high_volume": old_config.get("high_volume", 100),
+            "apps": [old_config.get("app_name", "Discord.exe") or "system"]
+        }
+        return {"version": CONFIG_VERSION, "profiles": [profile]}
+    return old_config
+
 def load_config():
-    """Loads the configuration from the file next to the exe"""
-    # First, look for config.json next to the exe file
     exe_dir = get_exe_directory()
     config_path = os.path.join(exe_dir, "config.json")
-    
-    # Default values
-    default_config = {
-        "hotkey": "f9",
-        "low_volume": 20,
-        "high_volume": 100,
-        "app_name": "Discord.exe",
-        "show_console": False,
-        "target_devices": "all",
-        "exclude_devices": []
-    }
-    
     try:
         if not os.path.exists(config_path):
             create_default_config(config_path)
-            return default_config
-        print(f"Loading configuration from: {config_path}")
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-            # Merge with default values
-            for key, value in default_config.items():
-                if key not in config:
-                    config[key] = value
-            
-            # Migration: if old float-based volume is found, convert to percent
-            if isinstance(config.get('low_volume'), float):
-                config['low_volume'] = int(config['low_volume'] * 100)
-            if isinstance(config.get('high_volume'), float):
-                config['high_volume'] = int(config['high_volume'] * 100)
-
-            return config
+        # Migrate if needed
+        if 'profiles' not in config:
+            config = migrate_old_config(config)
+            save_config(config)
+        # Ensure version
+        if 'version' not in config or config['version'] < CONFIG_VERSION:
+            config['version'] = CONFIG_VERSION
+            save_config(config)
+        return config
     except Exception as e:
         print(f"Error reading configuration: {e}")
-        print("Using default values")
-        return default_config
+        create_default_config(config_path)
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
 
 def save_config(config_data):
-    """Saves the configuration to the file next to the exe."""
     exe_dir = get_exe_directory()
     config_path = os.path.join(exe_dir, "config.json")
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config_data, f, indent=4, ensure_ascii=False)
 
-def create_temp_bat_files(config):
-    """Creates temporary BAT files using multiple approaches"""
-    nircmd_path = resource_path("nircmd.exe")
-    
-    print("🎯 Using combined approach for Discord control...")
-    
-    # Approach 1: Try multiple Discord app name variations
-    discord_variations = [
-        "Discord.exe",
-        "Discord",
-        "Discord (1)",
-        "Discord.exe (1)",
-        "Discord (2)",
-        "Discord.exe (2)"
-    ]
-    
-    # Approach 2: Also try system volume control as backup
-    lower_bat_content = '@echo off\nchcp 65001 >nul\n'
-    full_bat_content = '@echo off\nchcp 65001 >nul\n'
-    
-    # Try app-specific control first
-    for variation in discord_variations:
-        lower_bat_content += f'"{nircmd_path}" setappvolume "{variation}" {config["low_volume"]}\n'
-        lower_bat_content += f'echo Volume of {variation} lowered to {int(config["low_volume"] * 100)}%\n'
-        full_bat_content += f'"{nircmd_path}" setappvolume "{variation}" {config["high_volume"]}\n'
-        full_bat_content += f'echo Volume of {variation} restored to {int(config["high_volume"] * 100)}%\n'
-    
-    # Create temporary files
-    temp_dir = tempfile.gettempdir()
-    lower_bat_path = os.path.join(temp_dir, "lower_volume.bat")
-    full_bat_path = os.path.join(temp_dir, "full_volume.bat")
-    
-    with open(lower_bat_path, 'w', encoding='utf-8') as f:
-        f.write(lower_bat_content)
-    
-    with open(full_bat_path, 'w', encoding='utf-8') as f:
-        f.write(full_bat_content)
-    
-    return lower_bat_path, full_bat_path
+# --- HOTKEY REGISTRATION AND PROFILE HANDLING ---
 
-def run_bat(bat_path):
-    """Runs the BAT file"""
-    if os.path.exists(bat_path):
-        try:
-            subprocess.Popen(['cmd.exe', '/c', bat_path], shell=True)
-        except Exception as e:
-            print(f"Error: {e}")
-    else:
-        print(f"File not found: {bat_path}")
+profile_states = {}  # profile_index: {"volume_low": bool}
+
+# Helper: get sessions for a list of app names
+
+def get_target_app_sessions_for_names(app_names):
+    sessions = AudioUtilities.GetAllSessions()
+    found = []
+    for session in sessions:
+        proc = session.Process
+        if proc and proc.name().lower() in [n.lower() for n in app_names]:
+            try:
+                volume_interface = session._ctl.QueryInterface(ISimpleAudioVolume)
+                found.append({
+                    'session': session,
+                    'volume_interface': volume_interface,
+                    'pid': proc.pid,
+                    'name': proc.name(),
+                    'session_id': session._ctl.GetSessionIdentifier()
+                })
+            except Exception:
+                pass
+    return found
+
+# Helper: set system volume (using pycaw)
+def set_system_volume(volume_percent):
+    try:
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        volume = cast(interface, POINTER(IAudioEndpointVolume))
+        volume.SetMasterVolumeLevelScalar(volume_percent / 100.0, None)
+        return True
+    except Exception as e:
+        log_message(f"Error setting system volume: {e}")
+        return False
+
+# Main toggle function for a profile
+def toggle_profile_volume(profile_index):
+    config = load_config()
+    profile = config['profiles'][profile_index]
+    state = profile_states.setdefault(profile_index, {"volume_low": False})
+    apps = profile.get('apps', [])
+    low = profile.get('low_volume', 20)
+    high = profile.get('high_volume', 100)
+    hotkey = profile.get('hotkey', '')
+    # System volume
+    if any(t.lower() == 'system' for t in apps):
+        if state["volume_low"]:
+            set_system_volume(high)
+            log_message(f"[Profile {profile_index+1}] System volume restored to {high}% (Hotkey: {hotkey.upper()})")
+            state["volume_low"] = False
+        else:
+            set_system_volume(low)
+            log_message(f"[Profile {profile_index+1}] System volume lowered to {low}% (Hotkey: {hotkey.upper()})")
+            state["volume_low"] = True
+    # App volumes
+    app_targets = [t for t in apps if t.lower() != 'system']
+    if app_targets:
+        sessions = get_target_app_sessions_for_names(app_targets)
+        if not sessions:
+            log_message(f"[Profile {profile_index+1}] No sessions found for: {', '.join(app_targets)}")
+            return
+        for s in sessions:
+            try:
+                v = s['volume_interface']
+                if state["volume_low"]:
+                    v.SetMasterVolume(high / 100.0, None)
+                else:
+                    v.SetMasterVolume(low / 100.0, None)
+            except Exception as e:
+                log_message(f"[Profile {profile_index+1}] Error setting volume for {s['name']}: {e}")
+        if state["volume_low"]:
+            log_message(f"[Profile {profile_index+1}] App volumes restored to {high}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+            state["volume_low"] = False
+        else:
+            log_message(f"[Profile {profile_index+1}] App volumes lowered to {low}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+            state["volume_low"] = True
+
+# Register all hotkeys for all profiles
+def register_all_profile_hotkeys():
+    config = load_config()
+    for idx, profile in enumerate(config.get('profiles', [])):
+        hotkey = profile.get('hotkey', '')
+        if hotkey:
+            try:
+                keyboard.add_hotkey(hotkey, lambda idx=idx: toggle_profile_volume(idx))
+            except Exception as e:
+                log_message(f"Error registering hotkey '{hotkey}': {e}")
 
 # Global variables
 def log_message(message):
@@ -344,19 +386,14 @@ def show_tray_icon(on_restore_window):
         if str(item) == "Exit":
             icon.stop()
             os._exit(0)
-        elif str(item) == "Show Window":
+        elif str(item) == "Show Window" or str(item) == "Restore Window":
             on_restore_window()
-    def on_double_click(icon, item):
-        on_restore_window()
     menu = pystray.Menu(
-        pystray.MenuItem("Show Window", on_clicked),
+        pystray.MenuItem("Restore Window", on_clicked, default=True),
         pystray.MenuItem("Exit", on_clicked)
     )
     tray_icon = pystray.Icon("App Volume Control", image, "App Volume Control", menu)
-    tray_icon.visible = True
-    tray_icon.run_detached()
-    tray_icon._listener._on_notify = lambda *a, **k: None  # suppress notification popups
-    tray_icon._on_click = lambda icon, button, pressed: on_restore_window() if pressed and button == 1 else None
+    threading.Thread(target=tray_icon.run, daemon=True).start()
     return tray_icon
 
 def start_hotkey_listener(toggle_func, config):
@@ -374,6 +411,7 @@ def run_tray_icon():
 def gui_main():
     global config, log_text, tray_icon
     config = load_config()
+    profile = config['profiles'][0]
     root = tk.Tk()
     root.title("App Volume Control")
     root.geometry("600x700")
@@ -403,9 +441,7 @@ def gui_main():
     # Warning about default device
     warning_frame = ttk.LabelFrame(main_frame, text="⚠️ Important", padding=10)
     warning_frame.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(0, 20))
-    warning_text = """This program only works for the default output device in Windows.
-Make sure that in Discord settings you have selected 'Output device: Default',
-or that the default system output device matches the one Discord uses."""
+    warning_text = """This program only works for the default output device in Windows.\nMake sure that in Discord settings you have selected 'Output device: Default',\nor that the default system output device matches the one Discord uses."""
     warning_label = ttk.Label(warning_frame, text=warning_text, foreground='red', wraplength=550)
     warning_label.pack()
     
@@ -476,7 +512,7 @@ or that the default system output device matches the one Discord uses."""
     ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
     hotkey_row = ttk.Frame(settings_frame)
     hotkey_row.grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
-    hotkey_var = tk.StringVar(value=config['hotkey'])
+    hotkey_var = tk.StringVar(value=profile.get('hotkey', ''))
     hotkey_entry = ttk.Entry(hotkey_row, textvariable=hotkey_var, width=20)
     hotkey_entry.pack(side='left')
     hotkey_hint = ttk.Label(hotkey_row, text="Click and press a hotkey. Press Esc to clear.", foreground='#888')
@@ -581,28 +617,25 @@ or that the default system output device matches the one Discord uses."""
     
     # Low volume
     ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-    low_var = tk.IntVar(value=config['low_volume'])
+    low_var = tk.IntVar(value=profile.get('low_volume', 20))
     low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
     low_entry.grid(row=1, column=1, sticky='w', pady=5)
     
     # High volume
     ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-    high_var = tk.IntVar(value=config['high_volume'])
+    high_var = tk.IntVar(value=profile.get('high_volume', 100))
     high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
     high_entry.grid(row=2, column=1, sticky='w', pady=5)
     
-    # App name
-    ttk.Label(settings_frame, text="App name:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
-    app_var = tk.StringVar(value=config['app_name'])
-    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
+    # App/Apps field (single entry, comment below)
+    ttk.Label(settings_frame, text="App/Apps:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    app_var = tk.StringVar(value=','.join(profile.get('apps', [])))
+    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=30)
     app_entry.grid(row=3, column=1, sticky='w', pady=5)
-    # --- Horizontal frame for application selection ---
-    app_row = ttk.Frame(settings_frame)
-    app_row.grid(row=3, column=1, columnspan=2, sticky='w', pady=5)
-    app_entry = ttk.Entry(app_row, textvariable=app_var, width=20)
-    app_entry.pack(side='left')
-    choose_btn = ttk.Button(app_row, text="Choose...", command=choose_app)
-    choose_btn.pack(side='left', padx=(6,0))
+    choose_btn = ttk.Button(settings_frame, text="Choose...", command=choose_app)
+    choose_btn.grid(row=3, column=2, sticky='w', padx=(6,0))
+    app_comment = ttk.Label(settings_frame, text="Comma-separated. Use 'system' for system volume, or specify one or more app process names (e.g. Discord.exe,chrome.exe)", foreground='#888', wraplength=350, justify='left')
+    app_comment.grid(row=4, column=1, columnspan=2, sticky='w', pady=(0,10))
     
     # --- Validation of hotkey before saving ---
     def is_valid_hotkey(hotkey):
@@ -613,34 +646,34 @@ or that the default system output device matches the one Discord uses."""
     # --- Save() function now above button ---
     def save():
         try:
-            old_hotkey = config['hotkey']
-            old_app_name = config.get('app_name', '')
+            old_hotkey = profile.get('hotkey', '')
+            old_apps = profile.get('apps', [])
 
             new_hotkey = hotkey_var.get().strip()
             new_low_vol = int(low_var.get())
             new_high_vol = int(high_var.get())
-            new_app_name = app_var.get().strip()
+            new_apps = [t.strip() for t in app_var.get().split(',') if t.strip()]
             
             if not new_hotkey:
-                config['hotkey'] = ''
+                profile['hotkey'] = ''
             else:
                 if not is_valid_hotkey(new_hotkey):
                     messagebox.showerror("Hotkey Error", "Hotkey must use only English letters, numbers, F-keys, and modifiers (Ctrl, Alt, Shift, Win).\nPlease try again.")
                     hotkey_var.set(old_hotkey)
                     return
-                config['hotkey'] = new_hotkey
-            config['low_volume'] = new_low_vol
-            config['high_volume'] = new_high_vol
-            config['app_name'] = new_app_name
+                profile['hotkey'] = new_hotkey
+            profile['low_volume'] = new_low_vol
+            profile['high_volume'] = new_high_vol
+            profile['apps'] = new_apps
 
             save_config(config)
 
             # If app name changed, clear the session cache to force refetch
-            if old_app_name.lower() != new_app_name.lower():
+            if old_apps != new_apps:
                 global cached_sessions, last_session_check
                 cached_sessions = []
                 last_session_check = 0
-                log_message(f"✅ Target application changed to: {new_app_name}")
+                log_message(f"✅ App/Apps changed to: {', '.join(new_apps)}")
 
             # Dynamically update the hotkey if it changed
             if old_hotkey.lower() != new_hotkey.lower():
@@ -651,7 +684,7 @@ or that the default system output device matches the one Discord uses."""
                         except Exception:
                             pass
                     if new_hotkey:
-                        keyboard.add_hotkey(new_hotkey, toggle_volume_pycaw)
+                        keyboard.add_hotkey(new_hotkey, lambda idx=0: toggle_profile_volume(idx))
                     log_message(f"✅ Hotkey updated to: {new_hotkey.upper()}")
                 except Exception as e:
                     log_message(f"❌ Error updating hotkey: {e}")
@@ -659,7 +692,7 @@ or that the default system output device matches the one Discord uses."""
             
             # Update tray icon tooltip with new values
             if tray_icon:
-                tray_icon.title = f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {config['low_volume']}% ↔ {config['high_volume']}%"
+                tray_icon.title = f"App Volume Control\nHotkey: {profile['hotkey'].upper()}\nVolume: {profile['low_volume']}% ↔ {profile['high_volume']}%"
 
             log_message("✅ Configuration saved!")
             save_btn.config(state='disabled')
@@ -673,20 +706,20 @@ or that the default system output device matches the one Discord uses."""
 
     # --- Save Settings button now right in settings_frame ---
     save_btn = ttk.Button(settings_frame, text="Save Settings", command=save)
-    save_btn.grid(row=4, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
+    save_btn.grid(row=5, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
 
     # --- Automatic enable/disable Save Settings button ---
     def settings_changed(*args):
         # Check if values in fields are different from current config
         changed = False
         try:
-            if hotkey_var.get().strip() != config['hotkey']:
+            if hotkey_var.get().strip() != profile.get('hotkey', ''):
                 changed = True
-            elif int(low_var.get()) != config['low_volume']:
+            elif int(low_var.get()) != profile.get('low_volume', 20):
                 changed = True
-            elif int(high_var.get()) != config['high_volume']:
+            elif int(high_var.get()) != profile.get('high_volume', 100):
                 changed = True
-            elif app_var.get().strip() != config['app_name']:
+            elif [t.strip() for t in app_var.get().split(',') if t.strip()] != profile.get('apps', []):
                 changed = True
         except Exception:
             changed = True
@@ -702,7 +735,7 @@ or that the default system output device matches the one Discord uses."""
 
     # Log display (move above tray_btn)
     log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=6)
-    log_frame.grid(row=5, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
+    log_frame.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
     log_text = scrolledtext.ScrolledText(log_frame, height=10)
@@ -713,36 +746,24 @@ or that the default system output device matches the one Discord uses."""
         root.withdraw()
         # Tray icon stays visible - no need to show/hide it
     tray_btn = ttk.Button(main_frame, text="Minimize to Tray", command=minimize_to_tray)
-    tray_btn.grid(row=6, column=0, columnspan=2, pady=(0, 12))
+    tray_btn.grid(row=7, column=0, columnspan=2, pady=(0, 12))
 
     # Update main_frame row weights for resizing
-    main_frame.rowconfigure(5, weight=1)
-    main_frame.rowconfigure(6, weight=0)
+    main_frame.rowconfigure(6, weight=1)
+    main_frame.rowconfigure(7, weight=0)
     
     # Restore from tray
     def restore_from_tray():
-        # A robust way to restore the window from any state (tray, minimized, or background)
-        root.deiconify() # Restore if iconic (minimized) or withdrawn (tray)
-        root.lift()      # Bring to the top of the stacking order
-        
-        # A common trick on Windows to force the window to the foreground.
-        # It's briefly made "always on top" and then returned to normal.
+        root.deiconify()
+        root.lift()
         root.attributes('-topmost', 1)
-        root.update_idletasks() # Process pending events to apply the change
+        root.update_idletasks()
         root.attributes('-topmost', 0)
-        
-        root.focus_force() # Grab the input focus
-        # Don't hide the tray icon - keep it visible like Discord/Telegram
-    
-    # Handle actual exit (from tray menu)
+        root.focus_force()
     def on_exit():
-        # Signal the listener thread to shut down gracefully
         global shutdown_event
         if shutdown_event:
             win32event.SetEvent(shutdown_event)
-
-        # atexit will handle the cleanup of the mutex.
-        # We just need to stop the tray icon and close the hidden window.
         if tray_icon:
             tray_icon.visible = False
             tray_icon.stop()
@@ -751,29 +772,26 @@ or that the default system output device matches the one Discord uses."""
     
     # Initial log messages
     log_message("🎵 App Volume Control started!")
-    log_message(f"Hotkey: {config['hotkey'].upper()}")
-    log_message(f"Volume: {config['low_volume']}% ↔ {config['high_volume']}%")
-    log_message(f"Target: {config['app_name']} (cached for instant response)")
+    log_message(f"Hotkey: {profile.get('hotkey', '').upper()}")
+    log_message(f"Volume: {profile.get('low_volume', 20)}% ↔ {profile.get('high_volume', 100)}%")
+    log_message(f"App/Apps: {', '.join(profile.get('apps', []))}")
     
     # Check initial app sessions
-    initial_sessions = get_target_app_sessions()
+    initial_sessions = get_target_app_sessions_for_names(profile.get('apps', []))
     if not initial_sessions:
-        log_message(f"❌ No '{config['app_name']}' audio sessions found at startup!")
+        log_message(f"❌ No sessions found at startup for: {', '.join(profile.get('apps', []))}!")
         log_message("💡 Make sure the app is running, playing audio and using the default device!")
         log_message("   The program will continue checking when you press the hotkey.")
     else:
-        log_message(f"✅ Found {len(initial_sessions)} '{config['app_name']}' audio sessions at startup:")
+        log_message(f"✅ Found {len(initial_sessions)} sessions at startup:")
         for i, session_info in enumerate(initial_sessions):
             log_message(f"  {i+1}. PID: {session_info['pid']}")
     
-    # Create tray icon ONCE and run in background
+    # Create tray icon ONCE and run in background using show_tray_icon
     if tray_icon is None:
-        tray_icon = create_tray_icon(restore_from_tray, on_exit)
+        tray_icon = show_tray_icon(restore_from_tray)
         if tray_icon:
-            # Start tray icon in a separate thread
-            tray_thread = threading.Thread(target=run_tray_icon, daemon=True)
-            tray_thread.start()
-            tray_icon.visible = True  # Make it visible from the start
+            tray_icon.visible = True
         else:
             log_message("❌ Failed to create tray icon")
     
@@ -910,6 +928,9 @@ def main():
     # Check if another instance is already running. If so, signal it and exit.
     if not check_single_instance():
         sys.exit(0)
+    
+    # Register all hotkeys for all profiles
+    register_all_profile_hotkeys()
     
     # The old main() logic is now here
     gui_main()
