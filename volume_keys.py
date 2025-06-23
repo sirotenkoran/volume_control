@@ -66,7 +66,7 @@ def create_tray_icon(on_restore_window, on_exit):
         tray_icon = pystray.Icon(
             "App Volume Control",
             image,
-            f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%\nLeft-click to restore window",
+            f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {config['low_volume']}% ↔ {config['high_volume']}%",
             menu
         )
         
@@ -79,8 +79,8 @@ def create_tray_icon(on_restore_window, on_exit):
 def create_default_config(config_path):
     default_config = {
         "hotkey": "f9",
-        "low_volume": 0.2,
-        "high_volume": 1.0,
+        "low_volume": 20,
+        "high_volume": 100,
         "app_name": "Discord.exe",
         "show_console": False,
         "target_devices": "all",  # "all" or list of device names
@@ -100,8 +100,8 @@ def load_config():
     # Default values
     default_config = {
         "hotkey": "f9",
-        "low_volume": 0.2,
-        "high_volume": 1.0,
+        "low_volume": 20,
+        "high_volume": 100,
         "app_name": "Discord.exe",
         "show_console": False,
         "target_devices": "all",
@@ -119,11 +119,25 @@ def load_config():
             for key, value in default_config.items():
                 if key not in config:
                     config[key] = value
+            
+            # Migration: if old float-based volume is found, convert to percent
+            if isinstance(config.get('low_volume'), float):
+                config['low_volume'] = int(config['low_volume'] * 100)
+            if isinstance(config.get('high_volume'), float):
+                config['high_volume'] = int(config['high_volume'] * 100)
+
             return config
     except Exception as e:
         print(f"Error reading configuration: {e}")
         print("Using default values")
         return default_config
+
+def save_config(config_data):
+    """Saves the configuration to the file next to the exe."""
+    exe_dir = get_exe_directory()
+    config_path = os.path.join(exe_dir, "config.json")
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config_data, f, indent=4, ensure_ascii=False)
 
 def create_temp_bat_files(config):
     """Creates temporary BAT files using multiple approaches"""
@@ -192,108 +206,116 @@ SESSION_CACHE_DURATION = 10  # Increased cache duration for better performance
 tray_icon = None
 log_text = None
 
-def get_current_discord_sessions():
-    """Get current Discord sessions (with aggressive caching for performance)"""
-    global cached_sessions, last_session_check
+def get_target_app_sessions():
+    """Get current sessions for the target app (with aggressive caching for performance)"""
+    global cached_sessions, last_session_check, config
     
     current_time = time.time()
     
-    # Use cached sessions if they're recent enough (more aggressive caching)
+    # Use cached sessions if they're recent enough
     if current_time - last_session_check < SESSION_CACHE_DURATION and cached_sessions:
         return cached_sessions
     
     # Refresh sessions
-    discord_sessions = []
+    target_sessions = []
+    app_name_to_find = config.get('app_name', '').lower()
     
+    if not app_name_to_find:
+        return [] # Don't search if app name is empty
+
     try:
-        # Get Discord sessions on default device (this is what we can control)
         sessions = AudioUtilities.GetAllSessions()
         
         for session in sessions:
             proc = session.Process
-            if proc and proc.name().lower().startswith('discord'):
+            if proc and proc.name().lower() == app_name_to_find:
                 try:
                     volume_interface = session._ctl.QueryInterface(ISimpleAudioVolume)
-                    discord_sessions.append({
+                    target_sessions.append({
                         'session': session,
                         'volume_interface': volume_interface,
                         'pid': proc.pid,
                         'name': proc.name(),
                         'session_id': session._ctl.GetSessionIdentifier()
                     })
-                except Exception as e:
+                except Exception:
                     # Only log errors during startup, not during hotkey presses
                     pass
         
         # Update cache
-        cached_sessions = discord_sessions
+        cached_sessions = target_sessions
         last_session_check = current_time
         
-        return discord_sessions
+        return target_sessions
         
-    except Exception as e:
+    except Exception:
         # Return cached sessions if available, even if old
         if cached_sessions:
             return cached_sessions
         return []
 
-def set_discord_volume_on_all_devices(sessions, volume, config):
-    """Set volume for Discord on all target sessions (PID-based, pycaw only)"""
+def set_volume_on_sessions(sessions, volume_percent, app_name):
+    """Set volume for the target app on all its sessions (PID-based, pycaw only)"""
     if not sessions:
-        print(f"\n❌ No Discord sessions found!")
-        print("💡 Make sure Discord is running and using the default device")
+        log_message(f"❌ No active audio sessions found for '{app_name}'")
+        log_message("💡 Make sure the app is running and using the default device.")
         return False
     
-    print(f"\n🎵 Setting Discord volume to {volume*100:.0f}%...")
+    volume_float = volume_percent / 100.0
+    log_message(f"🎵 Setting '{app_name}' volume to {volume_percent}%...")
     success_count = 0
     
     for i, session_info in enumerate(sessions):
         try:
-            # Set volume instantly without any delays
             volume_interface = session_info['volume_interface']
-            volume_interface.SetMasterVolume(volume, None)
+            volume_interface.SetMasterVolume(volume_float, None)
             
             # Verify the change was applied
             current_volume = volume_interface.GetMasterVolume()
-            if abs(current_volume - volume) < 0.01:  # Check if volume was set correctly
-                print(f"  ✅ Discord session {i+1} (PID: {session_info['pid']}) - {volume*100:.0f}%")
+            if abs(current_volume - volume_float) < 0.01:
+                log_message(f"  ✅ Session {i+1} (PID: {session_info['pid']}) set to {volume_percent}%")
                 success_count += 1
             else:
-                print(f"  ⚠️  Discord session {i+1} - volume mismatch: {current_volume*100:.0f}%")
+                log_message(f"  ⚠️ Session {i+1} - volume mismatch: {current_volume*100:.0f}%")
                 
         except Exception as e:
-            print(f"  ❌ Error Discord session {i+1}: {e}")
+            log_message(f"  ❌ Error on session {i+1}: {e}")
             # If session is invalid, clear cache to force refresh
             global cached_sessions
             cached_sessions = []
     
     if success_count == 0:
-        print("  ⚠️  No sessions were controlled successfully")
+        log_message("  ⚠️ No sessions were controlled successfully.")
         return False
     
     return True
 
 def toggle_volume_pycaw():
-    """Toggle volume using pycaw for all Discord sessions (optimized for speed)"""
+    """Toggle volume using pycaw for all sessions of the target app"""
     global volume_low, config
     
-    # Get current Discord sessions (with caching)
-    discord_sessions = get_current_discord_sessions()
+    app_sessions = get_target_app_sessions()
+    app_name = config.get('app_name', 'N/A')
+
+    if not app_sessions:
+        log_message(f"❌ No audio sessions for '{app_name}' found. Press hotkey again to retry.")
+        # Force a cache refresh for the next try
+        global last_session_check
+        last_session_check = 0
+        return
     
     if volume_low:
-        # Restore volume instantly
-        if set_discord_volume_on_all_devices(discord_sessions, config['high_volume'], config):
+        if set_volume_on_sessions(app_sessions, config['high_volume'], app_name):
             volume_low = False
-            print("  🎉 Volume restored instantly!")
+            log_message(f"🎉 Volume for '{app_name}' restored!")
         else:
-            print("  ⚠️  Failed to restore volume")
+            log_message(f"⚠️ Failed to restore volume for '{app_name}'.")
     else:
-        # Lower volume instantly
-        if set_discord_volume_on_all_devices(discord_sessions, config['low_volume'], config):
+        if set_volume_on_sessions(app_sessions, config['low_volume'], app_name):
             volume_low = True
-            print("  🎉 Volume lowered instantly!")
+            log_message(f"🎉 Volume for '{app_name}' lowered!")
         else:
-            print("  ⚠️  Failed to lower volume")
+            log_message(f"⚠️ Failed to lower volume for '{app_name}'.")
 
 def check_for_ctrl_c():
     """Checks if Ctrl+C is pressed only when console is focused"""
@@ -396,14 +418,14 @@ or that the default system output device matches the one Discord uses."""
     hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
     
     # Low volume
-    ttk.Label(settings_frame, text="Low volume (0.0-1.0):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-    low_var = tk.DoubleVar(value=config['low_volume'])
+    ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
+    low_var = tk.IntVar(value=config['low_volume'])
     low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
     low_entry.grid(row=1, column=1, sticky='w', pady=5)
     
     # High volume
-    ttk.Label(settings_frame, text="High volume (0.0-1.0):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-    high_var = tk.DoubleVar(value=config['high_volume'])
+    ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+    high_var = tk.IntVar(value=config['high_volume'])
     high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
     high_entry.grid(row=2, column=1, sticky='w', pady=5)
     
@@ -419,13 +441,60 @@ or that the default system output device matches the one Discord uses."""
     
     # Save button
     def save():
-        config['hotkey'] = hotkey_var.get()
-        config['low_volume'] = float(low_var.get())
-        config['high_volume'] = float(high_var.get())
-        config['app_name'] = app_var.get()
-        save_config(config)
-        log_message("✅ Configuration saved!")
-        messagebox.showinfo("Saved", "Configuration saved!")
+        try:
+            old_hotkey = config['hotkey']
+            old_app_name = config.get('app_name', '')
+
+            new_hotkey = hotkey_var.get().strip()
+            new_low_vol = int(low_var.get())
+            new_high_vol = int(high_var.get())
+            new_app_name = app_var.get().strip()
+            
+            if not new_hotkey:
+                messagebox.showerror("Error", "Hotkey cannot be empty.")
+                return
+            if not (0 <= new_low_vol <= 100 and 0 <= new_high_vol <= 100):
+                messagebox.showerror("Error", "Volume must be between 0 and 100.")
+                return
+
+            config['hotkey'] = new_hotkey
+            config['low_volume'] = new_low_vol
+            config['high_volume'] = new_high_vol
+            config['app_name'] = new_app_name
+
+            save_config(config)
+
+            # If app name changed, clear the session cache to force refetch
+            if old_app_name.lower() != new_app_name.lower():
+                global cached_sessions, last_session_check
+                cached_sessions = []
+                last_session_check = 0
+                log_message(f"✅ Target application changed to: {new_app_name}")
+
+            # Dynamically update the hotkey if it changed
+            if old_hotkey.lower() != new_hotkey.lower():
+                try:
+                    keyboard.remove_hotkey(old_hotkey)
+                    keyboard.add_hotkey(new_hotkey, toggle_volume_pycaw)
+                    log_message(f"✅ Hotkey updated to: {new_hotkey.upper()}")
+                except Exception as e:
+                    log_message(f"❌ Error updating hotkey: {e}")
+                    messagebox.showwarning("Hotkey Error", f"Could not update hotkey.\nPlease restart the app.\nError: {e}")
+            
+            # Update tray icon tooltip with new values
+            if tray_icon:
+                tray_icon.title = f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {config['low_volume']}% ↔ {config['high_volume']}%"
+
+            log_message("✅ Configuration saved!")
+            messagebox.showinfo("Saved", "Configuration saved!")
+
+        except ValueError:
+            log_message("❌ Error saving: Invalid number for volume.")
+            messagebox.showerror("Error", "Could not save settings: please enter a valid number for volume (e.g., 20).")
+        except Exception as e:
+            log_message(f"❌ Error saving settings: {e}")
+            messagebox.showerror("Error", f"Could not save settings: {e}")
+            
     save_btn = ttk.Button(btn_frame, text="Save Settings", command=save)
     save_btn.pack(side='left', padx=5)
     
@@ -478,17 +547,17 @@ or that the default system output device matches the one Discord uses."""
     # Initial log messages
     log_message("🎵 App Volume Control started!")
     log_message(f"Hotkey: {config['hotkey'].upper()}")
-    log_message(f"Volume: {int(config['low_volume'] * 100)}% ↔ {int(config['high_volume'] * 100)}%")
-    log_message("Target: Discord sessions (cached for instant response)")
+    log_message(f"Volume: {config['low_volume']}% ↔ {config['high_volume']}%")
+    log_message(f"Target: {config['app_name']} (cached for instant response)")
     
-    # Check initial Discord sessions
-    initial_sessions = get_current_discord_sessions()
+    # Check initial app sessions
+    initial_sessions = get_target_app_sessions()
     if not initial_sessions:
-        log_message("❌ Discord audio sessions not found at startup!")
-        log_message("💡 Make sure Discord is running, playing audio and using the default device!")
-        log_message("   The program will continue running and check for sessions when you press the hotkey.")
+        log_message(f"❌ No '{config['app_name']}' audio sessions found at startup!")
+        log_message("💡 Make sure the app is running, playing audio and using the default device!")
+        log_message("   The program will continue checking when you press the hotkey.")
     else:
-        log_message(f"✅ Found {len(initial_sessions)} Discord audio sessions at startup:")
+        log_message(f"✅ Found {len(initial_sessions)} '{config['app_name']}' audio sessions at startup:")
         for i, session_info in enumerate(initial_sessions):
             log_message(f"  {i+1}. PID: {session_info['pid']}")
     
