@@ -20,6 +20,8 @@ import win32api
 import winerror
 import win32con
 import psutil
+import re
+from keyboard._canonical_names import normalize_name, all_modifiers
 
 # Hide console window when running as exe
 if getattr(sys, 'frozen', False):
@@ -294,7 +296,7 @@ def set_volume_on_sessions(sessions, volume_percent, app_name):
 def toggle_volume_pycaw():
     """Toggle volume using pycaw for all sessions of the target app"""
     global volume_low, config
-    
+
     app_sessions = get_target_app_sessions()
     app_name = config.get('app_name', 'N/A')
 
@@ -304,7 +306,7 @@ def toggle_volume_pycaw():
         global last_session_check
         last_session_check = 0
         return
-    
+
     if volume_low:
         if set_volume_on_sessions(app_sessions, config['high_volume'], app_name):
             volume_low = False
@@ -412,106 +414,9 @@ or that the default system output device matches the one Discord uses."""
     settings_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
     settings_frame.columnconfigure(1, weight=1)
     
-    # Hotkey
-    ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
-    hotkey_var = tk.StringVar(value=config['hotkey'])
-    hotkey_entry = ttk.Entry(settings_frame, textvariable=hotkey_var, width=20)
-    hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
-
-    def record_hotkey():
-        record_win = tk.Toplevel(root)
-        record_win.title("Record Hotkey")
-        record_win.geometry("340x120")
-        record_win.transient(root)
-        record_win.grab_set()
-        # Центрируем окно относительно главного
-        root.update_idletasks()
-        x = root.winfo_x() + (root.winfo_width() // 2) - 170
-        y = root.winfo_y() + (root.winfo_height() // 2) - 60
-        record_win.geometry(f"340x120+{x}+{y}")
-        # Установить иконку приложения
-        try:
-            icon_path = resource_path("icon.ico")
-            if os.path.exists(icon_path):
-                record_win.iconbitmap(icon_path)
-        except:
-            pass
-        label = ttk.Label(record_win, text="Press the desired key combination\nThen click 'Set Hotkey' to confirm", font=(None, 10))
-        label.pack(pady=(10, 2))
-        result_var = tk.StringVar()
-        result_entry = ttk.Entry(record_win, textvariable=result_var, font=('Arial', 14), justify='center', state='readonly')
-        result_entry.pack(pady=6, padx=10, fill=tk.X)
-        
-        pressed = set()
-        last_combo = [""]
-        done = [False]
-
-        def on_key_event(e):
-            if done[0]:
-                return
-            if e.name == 'enter':
-                return  # Не добавлять Enter в хоткей
-            if e.event_type == 'down':
-                pressed.add(e.name)
-                # Формируем строку хоткея по всем нажатым клавишам
-                keys = []
-                for k in ['ctrl', 'alt', 'shift', 'win']:
-                    if k in pressed:
-                        keys.append(k)
-                others = [k for k in pressed if k not in ['ctrl', 'alt', 'shift', 'win']]
-                combo = '+'.join([k.capitalize() if len(k)==1 else k for k in keys + others])
-                if combo:
-                    result_var.set(combo)
-                    last_combo[0] = combo
-            elif e.event_type == 'up':
-                if e.name in pressed:
-                    pressed.remove(e.name)
-                # Если все клавиши отпущены, показываем last_combo
-                if not pressed and last_combo[0]:
-                    result_var.set(last_combo[0])
-
-        def finish():
-            if done[0]:
-                return
-            done[0] = True
-            keyboard.unhook_all()
-            val = result_var.get()
-            if val:
-                hotkey_var.set(val.lower())
-            record_win.destroy()
-
-        keyboard.hook(on_key_event, suppress=False)
-        record_win.protocol("WM_DELETE_WINDOW", lambda: (keyboard.unhook_all(), record_win.destroy()))
-        result_entry.focus_set()
-
-        # Кнопка 'Set Hotkey' для ручного завершения
-        set_btn = ttk.Button(record_win, text="Set Hotkey", command=finish)
-        set_btn.pack(pady=4)
-        set_btn.focus_set()
-        record_win.bind('<Escape>', lambda e: finish())
-
-    record_btn = ttk.Button(settings_frame, text="Record...", command=record_hotkey)
-    record_btn.grid(row=0, column=2, sticky='w', padx=(5,0), pady=5)
-    
-    # Low volume
-    ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-    low_var = tk.IntVar(value=config['low_volume'])
-    low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
-    low_entry.grid(row=1, column=1, sticky='w', pady=5)
-    
-    # High volume
-    ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-    high_var = tk.IntVar(value=config['high_volume'])
-    high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
-    high_entry.grid(row=2, column=1, sticky='w', pady=5)
-    
-    # App name
-    ttk.Label(settings_frame, text="App name:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
-    app_var = tk.StringVar(value=config['app_name'])
-    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
-    app_entry.grid(row=3, column=1, sticky='w', pady=5)
-
+    # --- Функция выбора приложения (перемещена выше) ---
     def choose_app():
+        import psutil
         # Получить список приложений с аудиосессиями
         try:
             sessions = AudioUtilities.GetAllSessions()
@@ -567,14 +472,145 @@ or that the default system output device matches the one Discord uses."""
         btn.pack(pady=10)
         listbox.bind('<Double-1>', lambda e: on_select())
 
-    choose_btn = ttk.Button(settings_frame, text="Choose...", command=choose_app)
-    choose_btn.grid(row=3, column=2, sticky='w', padx=(5,0), pady=5)
+    # --- Горизонтальный фрейм для хоткея ---
+    ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+    hotkey_row = ttk.Frame(settings_frame)
+    hotkey_row.grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
+    hotkey_var = tk.StringVar(value=config['hotkey'])
+    hotkey_entry = ttk.Entry(hotkey_row, textvariable=hotkey_var, width=20)
+    hotkey_entry.pack(side='left')
+    hotkey_hint = ttk.Label(hotkey_row, text="Click and press a hotkey. Press Esc to clear.", foreground='#888')
+    hotkey_hint.pack(side='left', padx=(6,0))
+
+    # --- Новый UX: запись хоткея прямо в поле ---
+    hotkey_recording = {'active': False, 'pressed': set(), 'last_combo': '', 'old_value': ''}
+
+    # Универсальная таблица scan_code → символ (английская раскладка)
+    scan_to_char = {
+        2: '1', 3: '2', 4: '3', 5: '4', 6: '5', 7: '6', 8: '7', 9: '8', 10: '9', 11: '0',
+        12: '-', 13: '=', 16: 'q', 17: 'w', 18: 'e', 19: 'r', 20: 't', 21: 'y', 22: 'u', 23: 'i', 24: 'o', 25: 'p',
+        26: '[', 27: ']', 28: 'enter', 29: 'ctrl', 30: 'a', 31: 's', 32: 'd', 33: 'f', 34: 'g', 35: 'h', 36: 'j',
+        37: 'k', 38: 'l', 39: ';', 40: "'", 41: '`', 42: 'shift', 43: '\\', 44: 'z', 45: 'x', 46: 'c', 47: 'v',
+        48: 'b', 49: 'n', 50: 'm', 51: ',', 52: '.', 53: '/', 54: 'shift', 55: '*', 56: 'alt', 57: 'space',
+        58: 'caps lock', 59: 'f1', 60: 'f2', 61: 'f3', 62: 'f4', 63: 'f5', 64: 'f6', 65: 'f7', 66: 'f8', 67: 'f9',
+        68: 'f10', 87: 'f11', 88: 'f12', 100: 'alt gr', 3667: 'print screen', 57419: 'left', 57416: 'up', 57424: 'down', 57421: 'right'
+    }
+    # Добавим numpad
+    scan_to_char.update({
+        69: 'num lock', 71: 'num7', 72: 'num8', 73: 'num9', 74: 'num-', 75: 'num4', 76: 'num5', 77: 'num6',
+        78: 'num+', 79: 'num1', 80: 'num2', 81: 'num3', 82: 'num0', 83: 'num.', 96: 'f13', 97: 'f14', 98: 'f15',
+        99: 'f16', 100: 'f17', 101: 'f18', 102: 'f19', 103: 'f20', 104: 'f21', 105: 'f22', 106: 'f23', 107: 'f24'
+    })
+
+    def get_key_name(e):
+        # Модификаторы
+        if e.name in all_modifiers:
+            return e.name
+        # Если есть scan_code и он в таблице — используем его
+        if e.scan_code in scan_to_char:
+            return scan_to_char[e.scan_code]
+        # F-клавиши
+        if e.name and e.name.startswith('f') and e.name[1:].isdigit():
+            return e.name
+        # Если ничего не подошло — используем e.name
+        return e.name
+
+    def on_hotkey_focus_in(event):
+        if hotkey_recording['active']:
+            return
+        hotkey_recording['active'] = True
+        hotkey_recording['pressed'] = set()
+        hotkey_recording['last_combo'] = ''
+        hotkey_recording['old_value'] = hotkey_var.get()
+        keyboard.hook(hotkey_hook, suppress=False)
+
+    def on_hotkey_focus_out(event):
+        if hotkey_recording['active']:
+            keyboard.unhook_all()
+            hotkey_recording['active'] = False
+            # Если пользователь ничего не ввёл — вернуть старое значение
+            if not hotkey_var.get().strip():
+                hotkey_var.set(hotkey_recording['old_value'])
+
+    def on_hotkey_escape(event):
+        hotkey_var.set("")
+        hotkey_entry.delete(0, tk.END)
+        hotkey_recording['pressed'].clear()
+        hotkey_recording['last_combo'] = ''
+        hotkey_recording['active'] = False
+        keyboard.unhook_all()
+        return 'break'
+
+    def hotkey_hook(e):
+        if not hotkey_recording['active']:
+            return
+        if e.name == 'enter' or e.name == 'esc':
+            return  # Не добавлять Enter/Escape в хоткей
+        key = get_key_name(e)
+        if e.event_type == 'down':
+            hotkey_recording['pressed'].add(key)
+            # Формируем строку хоткея по всем нажатым клавишам
+            keys = []
+            for k in ['ctrl', 'alt', 'shift', 'win']:
+                if k in hotkey_recording['pressed']:
+                    keys.append(k)
+            others = [k for k in hotkey_recording['pressed'] if k not in ['ctrl', 'alt', 'shift', 'win']]
+            combo = '+'.join([k.capitalize() if len(k)==1 else k for k in keys + others])
+            if combo:
+                hotkey_entry.delete(0, tk.END)
+                hotkey_entry.insert(0, combo)
+                hotkey_var.set(combo.lower())
+                hotkey_recording['last_combo'] = combo
+        elif e.event_type == 'up':
+            if key in hotkey_recording['pressed']:
+                hotkey_recording['pressed'].remove(key)
+            # Если все клавиши отпущены, показываем last_combo
+            if not hotkey_recording['pressed'] and hotkey_recording['last_combo']:
+                hotkey_entry.delete(0, tk.END)
+                hotkey_entry.insert(0, hotkey_recording['last_combo'])
+                hotkey_var.set(hotkey_recording['last_combo'].lower())
+                keyboard.unhook_all()
+                hotkey_recording['active'] = False
+                hotkey_entry.icursor(tk.END)
+                hotkey_entry.selection_clear()
+                save_btn.focus_set()
+
+    hotkey_entry.bind('<FocusIn>', on_hotkey_focus_in)
+    hotkey_entry.bind('<FocusOut>', on_hotkey_focus_out)
+    hotkey_entry.bind('<KeyPress-Escape>', on_hotkey_escape)
     
-    # Buttons frame
-    btn_frame = ttk.Frame(main_frame)
-    btn_frame.grid(row=3, column=0, columnspan=2, pady=20)
+    # Low volume
+    ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
+    low_var = tk.IntVar(value=config['low_volume'])
+    low_entry = ttk.Entry(settings_frame, textvariable=low_var, width=20)
+    low_entry.grid(row=1, column=1, sticky='w', pady=5)
     
-    # Save button
+    # High volume
+    ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+    high_var = tk.IntVar(value=config['high_volume'])
+    high_entry = ttk.Entry(settings_frame, textvariable=high_var, width=20)
+    high_entry.grid(row=2, column=1, sticky='w', pady=5)
+    
+    # App name
+    ttk.Label(settings_frame, text="App name:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    app_var = tk.StringVar(value=config['app_name'])
+    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
+    app_entry.grid(row=3, column=1, sticky='w', pady=5)
+    # --- Горизонтальный фрейм для выбора приложения ---
+    app_row = ttk.Frame(settings_frame)
+    app_row.grid(row=3, column=1, columnspan=2, sticky='w', pady=5)
+    app_entry = ttk.Entry(app_row, textvariable=app_var, width=20)
+    app_entry.pack(side='left')
+    choose_btn = ttk.Button(app_row, text="Choose...", command=choose_app)
+    choose_btn.pack(side='left', padx=(6,0))
+    
+    # --- Валидация хоткея при сохранении ---
+    def is_valid_hotkey(hotkey):
+        # Разрешаем только латиницу, цифры, ctrl, alt, shift, win, f1-f24, +
+        pattern = r'^(ctrl\+|alt\+|shift\+|win\+)*([a-z0-9]|f([1-9]|1[0-9]|2[0-4]))(\+([a-z0-9]|ctrl|alt|shift|win|f([1-9]|1[0-9]|2[0-4])))*$'
+        return bool(re.fullmatch(pattern, hotkey))
+
+    # --- Функция save() теперь выше кнопки ---
     def save():
         try:
             old_hotkey = config['hotkey']
@@ -586,13 +622,13 @@ or that the default system output device matches the one Discord uses."""
             new_app_name = app_var.get().strip()
             
             if not new_hotkey:
-                messagebox.showerror("Error", "Hotkey cannot be empty.")
-                return
-            if not (0 <= new_low_vol <= 100 and 0 <= new_high_vol <= 100):
-                messagebox.showerror("Error", "Volume must be between 0 and 100.")
-                return
-
-            config['hotkey'] = new_hotkey
+                config['hotkey'] = ''
+            else:
+                if not is_valid_hotkey(new_hotkey):
+                    messagebox.showerror("Hotkey Error", "Hotkey must use only English letters, numbers, F-keys, and modifiers (Ctrl, Alt, Shift, Win).\nPlease try again.")
+                    hotkey_var.set(old_hotkey)
+                    return
+                config['hotkey'] = new_hotkey
             config['low_volume'] = new_low_vol
             config['high_volume'] = new_high_vol
             config['app_name'] = new_app_name
@@ -609,8 +645,13 @@ or that the default system output device matches the one Discord uses."""
             # Dynamically update the hotkey if it changed
             if old_hotkey.lower() != new_hotkey.lower():
                 try:
-                    keyboard.remove_hotkey(old_hotkey)
-                    keyboard.add_hotkey(new_hotkey, toggle_volume_pycaw)
+                    if old_hotkey:
+                        try:
+                            keyboard.remove_hotkey(old_hotkey)
+                        except Exception:
+                            pass
+                    if new_hotkey:
+                        keyboard.add_hotkey(new_hotkey, toggle_volume_pycaw)
                     log_message(f"✅ Hotkey updated to: {new_hotkey.upper()}")
                 except Exception as e:
                     log_message(f"❌ Error updating hotkey: {e}")
@@ -621,7 +662,7 @@ or that the default system output device matches the one Discord uses."""
                 tray_icon.title = f"App Volume Control\nHotkey: {config['hotkey'].upper()}\nVolume: {config['low_volume']}% ↔ {config['high_volume']}%"
 
             log_message("✅ Configuration saved!")
-            messagebox.showinfo("Saved", "Configuration saved!")
+            save_btn.config(state='disabled')
 
         except ValueError:
             log_message("❌ Error saving: Invalid number for volume.")
@@ -629,16 +670,42 @@ or that the default system output device matches the one Discord uses."""
         except Exception as e:
             log_message(f"❌ Error saving settings: {e}")
             messagebox.showerror("Error", f"Could not save settings: {e}")
-            
-    save_btn = ttk.Button(btn_frame, text="Save Settings", command=save)
-    save_btn.pack(side='left', padx=5)
-    
+
+    # --- Кнопка Save Settings теперь справа в settings_frame ---
+    save_btn = ttk.Button(settings_frame, text="Save Settings", command=save)
+    save_btn.grid(row=4, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
+
+    # --- Автоматическое включение/выключение кнопки Save Settings ---
+    def settings_changed(*args):
+        # Проверяем, отличаются ли значения в полях от текущего config
+        changed = False
+        try:
+            if hotkey_var.get().strip() != config['hotkey']:
+                changed = True
+            elif int(low_var.get()) != config['low_volume']:
+                changed = True
+            elif int(high_var.get()) != config['high_volume']:
+                changed = True
+            elif app_var.get().strip() != config['app_name']:
+                changed = True
+        except Exception:
+            changed = True
+        save_btn.config(state='normal' if changed else 'disabled')
+
+    # Привязываем к изменению всех полей
+    hotkey_var.trace_add('write', settings_changed)
+    low_var.trace_add('write', settings_changed)
+    high_var.trace_add('write', settings_changed)
+    app_var.trace_add('write', settings_changed)
+    # Вызываем сразу после запуска для корректного состояния кнопки
+    settings_changed()
+
     # Minimize to tray
     def minimize_to_tray():
         root.withdraw()
         # Tray icon stays visible - no need to show/hide it
-    tray_btn = ttk.Button(btn_frame, text="Minimize to Tray", command=minimize_to_tray)
-    tray_btn.pack(side='left', padx=5)
+    tray_btn = ttk.Button(main_frame, text="Minimize to Tray", command=minimize_to_tray)
+    tray_btn.grid(row=5, column=0, columnspan=2, pady=20)
     
     # Restore from tray
     def restore_from_tray():
@@ -672,7 +739,7 @@ or that the default system output device matches the one Discord uses."""
     
     # Log display
     log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=10)
-    log_frame.grid(row=4, column=0, columnspan=2, sticky='nsew', pady=(0, 10))
+    log_frame.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(0, 10))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
     
@@ -872,7 +939,7 @@ def cleanup_single_instance_lock():
             lock_file_handle = None
             
     except Exception:
-        pass
+            pass
 
 if __name__ == "__main__":
     main() 
