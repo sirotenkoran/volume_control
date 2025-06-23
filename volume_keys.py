@@ -19,6 +19,7 @@ import win32event
 import win32api
 import winerror
 import win32con
+import psutil
 
 # Hide console window when running as exe
 if getattr(sys, 'frozen', False):
@@ -416,6 +417,81 @@ or that the default system output device matches the one Discord uses."""
     hotkey_var = tk.StringVar(value=config['hotkey'])
     hotkey_entry = ttk.Entry(settings_frame, textvariable=hotkey_var, width=20)
     hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
+
+    def record_hotkey():
+        record_win = tk.Toplevel(root)
+        record_win.title("Record Hotkey")
+        record_win.geometry("340x120")
+        record_win.transient(root)
+        record_win.grab_set()
+        # Центрируем окно относительно главного
+        root.update_idletasks()
+        x = root.winfo_x() + (root.winfo_width() // 2) - 170
+        y = root.winfo_y() + (root.winfo_height() // 2) - 60
+        record_win.geometry(f"340x120+{x}+{y}")
+        # Установить иконку приложения
+        try:
+            icon_path = resource_path("icon.ico")
+            if os.path.exists(icon_path):
+                record_win.iconbitmap(icon_path)
+        except:
+            pass
+        label = ttk.Label(record_win, text="Press the desired key combination\nThen click 'Set Hotkey' to confirm", font=(None, 10))
+        label.pack(pady=(10, 2))
+        result_var = tk.StringVar()
+        result_entry = ttk.Entry(record_win, textvariable=result_var, font=('Arial', 14), justify='center', state='readonly')
+        result_entry.pack(pady=6, padx=10, fill=tk.X)
+        
+        pressed = set()
+        last_combo = [""]
+        done = [False]
+
+        def on_key_event(e):
+            if done[0]:
+                return
+            if e.name == 'enter':
+                return  # Не добавлять Enter в хоткей
+            if e.event_type == 'down':
+                pressed.add(e.name)
+                # Формируем строку хоткея по всем нажатым клавишам
+                keys = []
+                for k in ['ctrl', 'alt', 'shift', 'win']:
+                    if k in pressed:
+                        keys.append(k)
+                others = [k for k in pressed if k not in ['ctrl', 'alt', 'shift', 'win']]
+                combo = '+'.join([k.capitalize() if len(k)==1 else k for k in keys + others])
+                if combo:
+                    result_var.set(combo)
+                    last_combo[0] = combo
+            elif e.event_type == 'up':
+                if e.name in pressed:
+                    pressed.remove(e.name)
+                # Если все клавиши отпущены, показываем last_combo
+                if not pressed and last_combo[0]:
+                    result_var.set(last_combo[0])
+
+        def finish():
+            if done[0]:
+                return
+            done[0] = True
+            keyboard.unhook_all()
+            val = result_var.get()
+            if val:
+                hotkey_var.set(val.lower())
+            record_win.destroy()
+
+        keyboard.hook(on_key_event, suppress=False)
+        record_win.protocol("WM_DELETE_WINDOW", lambda: (keyboard.unhook_all(), record_win.destroy()))
+        result_entry.focus_set()
+
+        # Кнопка 'Set Hotkey' для ручного завершения
+        set_btn = ttk.Button(record_win, text="Set Hotkey", command=finish)
+        set_btn.pack(pady=4)
+        set_btn.focus_set()
+        record_win.bind('<Escape>', lambda e: finish())
+
+    record_btn = ttk.Button(settings_frame, text="Record...", command=record_hotkey)
+    record_btn.grid(row=0, column=2, sticky='w', padx=(5,0), pady=5)
     
     # Low volume
     ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
@@ -434,6 +510,65 @@ or that the default system output device matches the one Discord uses."""
     app_var = tk.StringVar(value=config['app_name'])
     app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
     app_entry.grid(row=3, column=1, sticky='w', pady=5)
+
+    def choose_app():
+        # Получить список приложений с аудиосессиями
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+            audio_names = set()
+            for session in sessions:
+                proc = session.Process
+                if proc:
+                    audio_names.add(proc.name())
+        except Exception as e:
+            audio_names = set()
+
+        # Получить все пользовательские процессы с окном
+        all_names = set()
+        try:
+            for proc in psutil.process_iter(['name', 'username']):
+                name = proc.info['name']
+                if name and proc.info['username']:
+                    all_names.add(name)
+        except Exception:
+            pass
+
+        # Сначала приложения с аудиосессией, затем остальные
+        sorted_names = sorted(audio_names) + sorted(all_names - audio_names)
+        if not sorted_names:
+            messagebox.showinfo("No apps", "No user applications found.")
+            return
+
+        # Окно выбора
+        win = tk.Toplevel(root)
+        win.title("Select Application")
+        win.geometry("400x400")
+        win.transient(root)
+        win.grab_set()
+        
+        label = ttk.Label(win, text="Select an application:")
+        label.pack(pady=10)
+        
+        listbox = tk.Listbox(win, height=18)
+        for name in sorted_names:
+            display = name + ("   [audio]" if name in audio_names else "")
+            listbox.insert(tk.END, display)
+        listbox.pack(fill=tk.BOTH, expand=True, padx=10)
+        
+        def on_select():
+            sel = listbox.curselection()
+            if sel:
+                # Убираем пометку [audio] при выборе
+                val = listbox.get(sel[0]).split()[0]
+                app_var.set(val)
+                win.destroy()
+        
+        btn = ttk.Button(win, text="Select", command=on_select)
+        btn.pack(pady=10)
+        listbox.bind('<Double-1>', lambda e: on_select())
+
+    choose_btn = ttk.Button(settings_frame, text="Choose...", command=choose_app)
+    choose_btn.grid(row=3, column=2, sticky='w', padx=(5,0), pady=5)
     
     # Buttons frame
     btn_frame = ttk.Frame(main_frame)
