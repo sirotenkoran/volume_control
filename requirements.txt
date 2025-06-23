@@ -1,5 +1,5 @@
 keyboard==0.13.5
-pycaw==20210701
+pycaw==20240210
 comtypes==1.1.14
 pystray==0.19.5
 Pillow==11.2.1
