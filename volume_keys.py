@@ -205,7 +205,8 @@ def toggle_profile_volume(profile_index):
     if app_targets:
         sessions = get_target_app_sessions_for_names(app_targets)
         if not sessions:
-            log_message(f"[Profile {profile_index+1}] No sessions found for: {', '.join(app_targets)}")
+            if app_targets or not any(t.lower() == 'system' for t in apps):
+                log_message(f"[Profile {profile_index+1}] No sessions found for: {', '.join(app_targets)}")
             return
         for s in sessions:
             try:
@@ -629,14 +630,112 @@ def gui_main():
     
     # App/Apps field (single entry, comment below)
     ttk.Label(settings_frame, text="App/Apps:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+    app_row = ttk.Frame(settings_frame)
+    app_row.grid(row=3, column=1, columnspan=2, sticky='w', pady=5)
     app_var = tk.StringVar(value=','.join(profile.get('apps', [])))
-    app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=30)
-    app_entry.grid(row=3, column=1, sticky='w', pady=5)
-    choose_btn = ttk.Button(settings_frame, text="Choose...", command=choose_app)
-    choose_btn.grid(row=3, column=2, sticky='w', padx=(6,0))
+    app_entry = ttk.Entry(app_row, textvariable=app_var, width=30)
+    app_entry.pack(side='left')
+    choose_btn = ttk.Button(app_row, text="Choose...", command=lambda: choose_app_multi(app_var))
+    choose_btn.pack(side='left', padx=(6,0))
     app_comment = ttk.Label(settings_frame, text="Comma-separated. Use 'system' for system volume, or specify one or more app process names (e.g. Discord.exe,chrome.exe)", foreground='#888', wraplength=350, justify='left')
     app_comment.grid(row=4, column=1, columnspan=2, sticky='w', pady=(0,10))
-    
+
+    def choose_app_multi(app_var):
+        import psutil
+        # Gather all running apps with audio sessions
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+            audio_names = set()
+            for session in sessions:
+                proc = session.Process
+                if proc:
+                    audio_names.add(proc.name())
+        except Exception:
+            audio_names = set()
+        all_names = set()
+        try:
+            for proc in psutil.process_iter(['name', 'username']):
+                name = proc.info['name']
+                if name and proc.info['username']:
+                    all_names.add(name)
+        except Exception:
+            pass
+        # Add 'system' as a special option
+        all_names.add('system')
+        # Sort: audio first, then the rest
+        sorted_names = sorted(audio_names) + sorted(all_names - audio_names - {'system'})
+        sorted_names = ['system'] + sorted_names if 'system' in all_names else sorted_names
+        # Current selected
+        current = set([x.strip() for x in app_var.get().split(',') if x.strip()])
+        # Dialog
+        win = tk.Toplevel(root)
+        win.title("Select Applications")
+        win.geometry("500x400")
+        win.minsize(400, 300)
+        win.transient(root)
+        win.grab_set()
+        # Center the dialog over the main window
+        win.update_idletasks()
+        x = root.winfo_x() + (root.winfo_width() // 2) - (500 // 2)
+        y = root.winfo_y() + (root.winfo_height() // 2) - (400 // 2)
+        win.geometry(f"500x400+{x}+{y}")
+        # Main horizontal layout
+        main_frame = ttk.Frame(win)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Left: scrollable checkbox area
+        left_frame = ttk.Frame(main_frame)
+        left_frame.grid(row=0, column=0, sticky='nsew')
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
+        # Right: vertical buttons
+        right_frame = ttk.Frame(main_frame)
+        right_frame.grid(row=0, column=1, sticky='ns', padx=(16,0))
+        # Label on top
+        label = ttk.Label(left_frame, text="Select one or more applications:")
+        label.pack(pady=(0,8), anchor='w')
+        # Scrollable area with one column
+        canvas = tk.Canvas(left_frame, borderwidth=0, highlightthickness=0, height=280)
+        cb_frame = ttk.Frame(canvas)
+        vsb = ttk.Scrollbar(left_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.create_window((0, 0), window=cb_frame, anchor="nw")
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        cb_frame.bind("<Configure>", on_frame_configure)
+        vars = {}
+        n = len(sorted_names)
+        for idx, name in enumerate(sorted_names):
+            var = tk.BooleanVar(value=(name in current))
+            cb = ttk.Checkbutton(cb_frame, text=name, variable=var)
+            cb.grid(row=idx, column=0, sticky='w', padx=4, pady=2)
+            vars[name] = var
+        # Buttons on the right
+        def on_set_apps():
+            selected = [name for name in sorted_names if vars[name].get()]
+            app_var.set(','.join(selected))
+            win.destroy()
+            # Trigger settings_changed to enable Save Settings
+            if hasattr(app_var, 'trace_add'):
+                app_var.set(app_var.get())  # retrigger
+            else:
+                settings_changed()
+        def on_cancel():
+            win.destroy()
+        set_btn = ttk.Button(right_frame, text="Set Apps", command=on_set_apps)
+        set_btn.pack(fill='x', pady=(0,8))
+        cancel_btn = ttk.Button(right_frame, text="Cancel", command=on_cancel)
+        cancel_btn.pack(fill='x')
+        # Keyboard bindings
+        win.bind('<Return>', lambda e: on_set_apps())
+        win.bind('<Escape>', lambda e: on_cancel())
+        # Make dialog resizable
+        win.rowconfigure(0, weight=1)
+        win.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+
     # --- Validation of hotkey before saving ---
     def is_valid_hotkey(hotkey):
         # Allow only Latin, digits, ctrl, alt, shift, win, f1-f24, +
@@ -779,7 +878,9 @@ def gui_main():
     # Check initial app sessions
     initial_sessions = get_target_app_sessions_for_names(profile.get('apps', []))
     if not initial_sessions:
-        log_message(f"❌ No sessions found at startup for: {', '.join(profile.get('apps', []))}!")
+        # Only log if not just system
+        if not (len(profile.get('apps', [])) == 1 and profile.get('apps', [])[0].lower() == 'system'):
+            log_message(f"❌ No sessions found at startup for: {', '.join(profile.get('apps', []))}!")
         log_message("💡 Make sure the app is running, playing audio and using the default device!")
         log_message("   The program will continue checking when you press the hotkey.")
     else:
