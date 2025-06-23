@@ -700,12 +700,24 @@ or that the default system output device matches the one Discord uses."""
     # Call immediately after start for correct button state
     settings_changed()
 
+    # Log display (move above tray_btn)
+    log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=6)
+    log_frame.grid(row=5, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
+    log_frame.columnconfigure(0, weight=1)
+    log_frame.rowconfigure(0, weight=1)
+    log_text = scrolledtext.ScrolledText(log_frame, height=10)
+    log_text.grid(row=0, column=0, sticky='nsew')
+
     # Minimize to tray
     def minimize_to_tray():
         root.withdraw()
         # Tray icon stays visible - no need to show/hide it
     tray_btn = ttk.Button(main_frame, text="Minimize to Tray", command=minimize_to_tray)
-    tray_btn.grid(row=5, column=0, columnspan=2, pady=20)
+    tray_btn.grid(row=6, column=0, columnspan=2, pady=(0, 12))
+
+    # Update main_frame row weights for resizing
+    main_frame.rowconfigure(5, weight=1)
+    main_frame.rowconfigure(6, weight=0)
     
     # Restore from tray
     def restore_from_tray():
@@ -736,15 +748,6 @@ or that the default system output device matches the one Discord uses."""
             tray_icon.stop()
         root.destroy()
         os._exit(0)
-    
-    # Log display
-    log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding=10)
-    log_frame.grid(row=6, column=0, columnspan=2, sticky='nsew', pady=(0, 10))
-    log_frame.columnconfigure(0, weight=1)
-    log_frame.rowconfigure(0, weight=1)
-    
-    log_text = scrolledtext.ScrolledText(log_frame, height=15, width=70)
-    log_text.grid(row=0, column=0, sticky='nsew')
     
     # Initial log messages
     log_message("🎵 App Volume Control started!")
