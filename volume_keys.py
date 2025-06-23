@@ -414,10 +414,10 @@ or that the default system output device matches the one Discord uses."""
     settings_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
     settings_frame.columnconfigure(1, weight=1)
     
-    # --- Функция выбора приложения (перемещена выше) ---
+    # --- Application selection function (moved above) ---
     def choose_app():
         import psutil
-        # Получить список приложений с аудиосессиями
+        # Get list of apps with audio sessions
         try:
             sessions = AudioUtilities.GetAllSessions()
             audio_names = set()
@@ -428,7 +428,7 @@ or that the default system output device matches the one Discord uses."""
         except Exception as e:
             audio_names = set()
 
-        # Получить все пользовательские процессы с окном
+        # Get all user processes with a window
         all_names = set()
         try:
             for proc in psutil.process_iter(['name', 'username']):
@@ -438,13 +438,13 @@ or that the default system output device matches the one Discord uses."""
         except Exception:
             pass
 
-        # Сначала приложения с аудиосессией, затем остальные
+        # First apps with audio session, then the rest
         sorted_names = sorted(audio_names) + sorted(all_names - audio_names)
         if not sorted_names:
             messagebox.showinfo("No apps", "No user applications found.")
             return
 
-        # Окно выбора
+        # Selection window
         win = tk.Toplevel(root)
         win.title("Select Application")
         win.geometry("400x400")
@@ -463,7 +463,7 @@ or that the default system output device matches the one Discord uses."""
         def on_select():
             sel = listbox.curselection()
             if sel:
-                # Убираем пометку [audio] при выборе
+                # Remove [audio] tag on selection
                 val = listbox.get(sel[0]).split()[0]
                 app_var.set(val)
                 win.destroy()
@@ -472,7 +472,7 @@ or that the default system output device matches the one Discord uses."""
         btn.pack(pady=10)
         listbox.bind('<Double-1>', lambda e: on_select())
 
-    # --- Горизонтальный фрейм для хоткея ---
+    # --- Horizontal frame for hotkey ---
     ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
     hotkey_row = ttk.Frame(settings_frame)
     hotkey_row.grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
@@ -482,10 +482,10 @@ or that the default system output device matches the one Discord uses."""
     hotkey_hint = ttk.Label(hotkey_row, text="Click and press a hotkey. Press Esc to clear.", foreground='#888')
     hotkey_hint.pack(side='left', padx=(6,0))
 
-    # --- Новый UX: запись хоткея прямо в поле ---
+    # --- New UX: record hotkey directly in field ---
     hotkey_recording = {'active': False, 'pressed': set(), 'last_combo': '', 'old_value': ''}
 
-    # Универсальная таблица scan_code → символ (английская раскладка)
+    # Universal scan_code → symbol table (English layout)
     scan_to_char = {
         2: '1', 3: '2', 4: '3', 5: '4', 6: '5', 7: '6', 8: '7', 9: '8', 10: '9', 11: '0',
         12: '-', 13: '=', 16: 'q', 17: 'w', 18: 'e', 19: 'r', 20: 't', 21: 'y', 22: 'u', 23: 'i', 24: 'o', 25: 'p',
@@ -495,7 +495,7 @@ or that the default system output device matches the one Discord uses."""
         58: 'caps lock', 59: 'f1', 60: 'f2', 61: 'f3', 62: 'f4', 63: 'f5', 64: 'f6', 65: 'f7', 66: 'f8', 67: 'f9',
         68: 'f10', 87: 'f11', 88: 'f12', 100: 'alt gr', 3667: 'print screen', 57419: 'left', 57416: 'up', 57424: 'down', 57421: 'right'
     }
-    # Добавим numpad
+    # Add numpad
     scan_to_char.update({
         69: 'num lock', 71: 'num7', 72: 'num8', 73: 'num9', 74: 'num-', 75: 'num4', 76: 'num5', 77: 'num6',
         78: 'num+', 79: 'num1', 80: 'num2', 81: 'num3', 82: 'num0', 83: 'num.', 96: 'f13', 97: 'f14', 98: 'f15',
@@ -503,16 +503,16 @@ or that the default system output device matches the one Discord uses."""
     })
 
     def get_key_name(e):
-        # Модификаторы
+        # Modifiers
         if e.name in all_modifiers:
             return e.name
-        # Если есть scan_code и он в таблице — используем его
+        # If there's scan_code and it's in the table — use it
         if e.scan_code in scan_to_char:
             return scan_to_char[e.scan_code]
-        # F-клавиши
+        # F-keys
         if e.name and e.name.startswith('f') and e.name[1:].isdigit():
             return e.name
-        # Если ничего не подошло — используем e.name
+        # If nothing matched — use e.name
         return e.name
 
     def on_hotkey_focus_in(event):
@@ -528,7 +528,7 @@ or that the default system output device matches the one Discord uses."""
         if hotkey_recording['active']:
             keyboard.unhook_all()
             hotkey_recording['active'] = False
-            # Если пользователь ничего не ввёл — вернуть старое значение
+            # If user didn't enter anything — return old value
             if not hotkey_var.get().strip():
                 hotkey_var.set(hotkey_recording['old_value'])
 
@@ -545,11 +545,11 @@ or that the default system output device matches the one Discord uses."""
         if not hotkey_recording['active']:
             return
         if e.name == 'enter' or e.name == 'esc':
-            return  # Не добавлять Enter/Escape в хоткей
+            return  # Don't add Enter/Escape to hotkey
         key = get_key_name(e)
         if e.event_type == 'down':
             hotkey_recording['pressed'].add(key)
-            # Формируем строку хоткея по всем нажатым клавишам
+            # Form hotkey string from all pressed keys
             keys = []
             for k in ['ctrl', 'alt', 'shift', 'win']:
                 if k in hotkey_recording['pressed']:
@@ -564,7 +564,7 @@ or that the default system output device matches the one Discord uses."""
         elif e.event_type == 'up':
             if key in hotkey_recording['pressed']:
                 hotkey_recording['pressed'].remove(key)
-            # Если все клавиши отпущены, показываем last_combo
+            # If all keys released, show last_combo
             if not hotkey_recording['pressed'] and hotkey_recording['last_combo']:
                 hotkey_entry.delete(0, tk.END)
                 hotkey_entry.insert(0, hotkey_recording['last_combo'])
@@ -596,7 +596,7 @@ or that the default system output device matches the one Discord uses."""
     app_var = tk.StringVar(value=config['app_name'])
     app_entry = ttk.Entry(settings_frame, textvariable=app_var, width=20)
     app_entry.grid(row=3, column=1, sticky='w', pady=5)
-    # --- Горизонтальный фрейм для выбора приложения ---
+    # --- Horizontal frame for application selection ---
     app_row = ttk.Frame(settings_frame)
     app_row.grid(row=3, column=1, columnspan=2, sticky='w', pady=5)
     app_entry = ttk.Entry(app_row, textvariable=app_var, width=20)
@@ -604,13 +604,13 @@ or that the default system output device matches the one Discord uses."""
     choose_btn = ttk.Button(app_row, text="Choose...", command=choose_app)
     choose_btn.pack(side='left', padx=(6,0))
     
-    # --- Валидация хоткея при сохранении ---
+    # --- Validation of hotkey before saving ---
     def is_valid_hotkey(hotkey):
-        # Разрешаем только латиницу, цифры, ctrl, alt, shift, win, f1-f24, +
+        # Allow only Latin, digits, ctrl, alt, shift, win, f1-f24, +
         pattern = r'^(ctrl\+|alt\+|shift\+|win\+)*([a-z0-9]|f([1-9]|1[0-9]|2[0-4]))(\+([a-z0-9]|ctrl|alt|shift|win|f([1-9]|1[0-9]|2[0-4])))*$'
         return bool(re.fullmatch(pattern, hotkey))
 
-    # --- Функция save() теперь выше кнопки ---
+    # --- Save() function now above button ---
     def save():
         try:
             old_hotkey = config['hotkey']
@@ -671,13 +671,13 @@ or that the default system output device matches the one Discord uses."""
             log_message(f"❌ Error saving settings: {e}")
             messagebox.showerror("Error", f"Could not save settings: {e}")
 
-    # --- Кнопка Save Settings теперь справа в settings_frame ---
+    # --- Save Settings button now right in settings_frame ---
     save_btn = ttk.Button(settings_frame, text="Save Settings", command=save)
     save_btn.grid(row=4, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
 
-    # --- Автоматическое включение/выключение кнопки Save Settings ---
+    # --- Automatic enable/disable Save Settings button ---
     def settings_changed(*args):
-        # Проверяем, отличаются ли значения в полях от текущего config
+        # Check if values in fields are different from current config
         changed = False
         try:
             if hotkey_var.get().strip() != config['hotkey']:
@@ -692,12 +692,12 @@ or that the default system output device matches the one Discord uses."""
             changed = True
         save_btn.config(state='normal' if changed else 'disabled')
 
-    # Привязываем к изменению всех полей
+    # Bind changes to all fields
     hotkey_var.trace_add('write', settings_changed)
     low_var.trace_add('write', settings_changed)
     high_var.trace_add('write', settings_changed)
     app_var.trace_add('write', settings_changed)
-    # Вызываем сразу после запуска для корректного состояния кнопки
+    # Call immediately after start for correct button state
     settings_changed()
 
     # Minimize to tray
