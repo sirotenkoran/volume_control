@@ -145,8 +145,8 @@ git push origin v1.2.3
 ```
 
 ### Monitor Builds
-- GitHub Actions: `https://github.com/yourusername/volume_control/actions`
-- Releases: `https://github.com/yourusername/volume_control/releases`
+- GitHub Actions: `https://github.com/sirotenkoran/volume_control/actions`
+- Releases: `https://github.com/sirotenkoran/volume_control/releases`
 
 ### Local Testing
 ```bash

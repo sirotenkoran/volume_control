@@ -160,5 +160,9 @@ git tag v1.2.3
 git push origin v1.2.3
 
 # Check build status
-# Go to: https://github.com/yourusername/volume_control/actions
-``` 
+# Go to: https://github.com/sirotenkoran/volume_control/actions
+```
+
+### Monitor Builds
+- GitHub Actions: `https://github.com/sirotenkoran/volume_control/actions`
+- Releases: `https://github.com/sirotenkoran/volume_control/releases` 

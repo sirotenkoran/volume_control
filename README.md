@@ -20,7 +20,7 @@ A lightweight application for quick volume control of any application using hotk
 ## 📦 Installation
 
 ### Option 1: Download Pre-built Release (Recommended)
-1. Go to [Releases](https://github.com/yourusername/volume_control/releases)
+1. Go to [Releases](https://github.com/sirotenkoran/volume_control/releases)
 2. Download the latest `AppVolumeControl.exe`
 3. Place it in any folder
 4. Run the program - it will create `config.json` automatically
@@ -37,7 +37,7 @@ A lightweight application for quick volume control of any application using hotk
 ## 🏷️ Releases
 
 ### For Users
-- **Latest Release**: Always available in the [Releases](https://github.com/yourusername/volume_control/releases) section
+- **Latest Release**: Always available in the [Releases](https://github.com/sirotenkoran/volume_control/releases) section
 - **Automatic Updates**: New releases are automatically built and published when we create version tags
 - **No Installation**: Just download and run the .exe file
 
@@ -51,8 +51,8 @@ A lightweight application for quick volume control of any application using hotk
   5. GitHub Actions automatically builds and publishes the release
 
 ### Build Status
-![Build Test](https://github.com/yourusername/volume_control/workflows/Build%20Test/badge.svg)
-![Build and Release](https://github.com/yourusername/volume_control/workflows/Build%20and%20Release/badge.svg)
+![Build Test](https://github.com/sirotenkoran/volume_control/workflows/Build%20Test/badge.svg)
+![Build and Release](https://github.com/sirotenkoran/volume_control/workflows/Build%20and%20Release/badge.svg)
 
 ## ⚙️ Configuration
 
