@@ -23,6 +23,7 @@ import psutil
 import re
 from keyboard._canonical_names import normalize_name, all_modifiers
 from comtypes import CLSCTX_ALL, cast, POINTER
+import shutil
 
 # Hide console window when running as exe
 if getattr(sys, 'frozen', False):
@@ -97,14 +98,15 @@ def create_default_config(config_path):
                 "high_volume": 100,
                 "apps": ["Discord.exe"]
             }
-        ]
+        ],
+        "autostart": False,
+        "minimize_on_start": False
     }
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(default_config, f, indent=4, ensure_ascii=False)
     print(f"Default configuration file created: {config_path}\nEdit it to customize the program!")
 
 def migrate_old_config(old_config):
-    # Detect old config by presence of 'hotkey' at root
     if 'hotkey' in old_config:
         profile = {
             "hotkey": old_config.get("hotkey", "f9"),
@@ -112,8 +114,44 @@ def migrate_old_config(old_config):
             "high_volume": old_config.get("high_volume", 100),
             "apps": [old_config.get("app_name", "Discord.exe") or "system"]
         }
-        return {"version": CONFIG_VERSION, "profiles": [profile]}
+        return {"version": CONFIG_VERSION, "profiles": [profile], "autostart": False, "minimize_on_start": False}
+    if 'autostart' not in old_config:
+        old_config['autostart'] = False
+    if 'minimize_on_start' not in old_config:
+        old_config['minimize_on_start'] = False
     return old_config
+
+# --- AUTOSTART LOGIC ---
+def get_startup_shortcut_path():
+    import os
+    startup_dir = os.path.join(os.environ['APPDATA'], r"Microsoft\Windows\Start Menu\Programs\Startup")
+    exe_name = os.path.basename(sys.executable if getattr(sys, 'frozen', False) else sys.argv[0])
+    shortcut_name = os.path.splitext(exe_name)[0] + ".lnk"
+    return os.path.join(startup_dir, shortcut_name)
+
+def add_to_startup():
+    import os
+    import pythoncom
+    from win32com.client import Dispatch
+    shortcut_path = get_startup_shortcut_path()
+    target = sys.executable if getattr(sys, 'frozen', False) else sys.executable
+    workdir = os.path.dirname(target)
+    icon = os.path.join(workdir, "icon.ico")
+    shell = Dispatch('WScript.Shell')
+    shortcut = shell.CreateShortCut(shortcut_path)
+    shortcut.Targetpath = target
+    shortcut.WorkingDirectory = workdir
+    if os.path.exists(icon):
+        shortcut.IconLocation = icon
+    shortcut.save()
+
+def remove_from_startup():
+    shortcut_path = get_startup_shortcut_path()
+    if os.path.exists(shortcut_path):
+        os.remove(shortcut_path)
+
+def is_in_startup():
+    return os.path.exists(get_startup_shortcut_path())
 
 def load_config():
     exe_dir = get_exe_directory()
@@ -442,7 +480,7 @@ def gui_main():
     # Warning about default device
     warning_frame = ttk.LabelFrame(main_frame, text="⚠️ Important", padding=10)
     warning_frame.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(0, 20))
-    warning_text = """This program only works for the default output device in Windows.\nMake sure that in Discord settings you have selected 'Output device: Default',\nor that the default system output device matches the one Discord uses."""
+    warning_text = """This program only works with the default output device in Windows. \nMake sure that the program whose volume you want to change (e.g., Discord) is \nset to use the 'Default' output device in its settings, or that the system's \ndefault output device matches the one used by your program (e.g., Discord)."""    
     warning_label = ttk.Label(warning_frame, text=warning_text, foreground='red', wraplength=550)
     warning_label.pack()
     
@@ -907,6 +945,37 @@ def gui_main():
     
     # Start the listener thread that will show the window if another instance is run
     start_show_window_listener(root, restore_from_tray)
+    
+    # --- AUTOSTART CHECKBOX ---
+    def on_autostart_toggle():
+        val = autostart_var.get()
+        config['autostart'] = val
+        save_config(config)
+        try:
+            if val:
+                add_to_startup()
+                log_message("✅ Autostart enabled.")
+            else:
+                remove_from_startup()
+                log_message("✅ Autostart disabled.")
+        except Exception as e:
+            log_message(f"❌ Autostart error: {e}")
+    autostart_var = tk.BooleanVar(value=config.get('autostart', False) or is_in_startup())
+    autostart_chk = ttk.Checkbutton(settings_frame, text="Start with Windows", variable=autostart_var, command=on_autostart_toggle)
+    autostart_chk.grid(row=6, column=0, columnspan=2, sticky='w', pady=(10, 0))
+
+    # --- MINIMIZE ON START CHECKBOX ---
+    def on_minimize_toggle():
+        val = minimize_var.get()
+        config['minimize_on_start'] = val
+        save_config(config)
+    minimize_var = tk.BooleanVar(value=config.get('minimize_on_start', False))
+    minimize_chk = ttk.Checkbutton(settings_frame, text="Minimize to tray on startup", variable=minimize_var, command=on_minimize_toggle)
+    minimize_chk.grid(row=7, column=0, columnspan=2, sticky='w', pady=(0, 0))
+
+    # Автоматическое сворачивание в трей при запуске, если включено
+    if config.get('minimize_on_start', False):
+        root.after(100, lambda: minimize_to_tray())
     
     root.mainloop()
 
