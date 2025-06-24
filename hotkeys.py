@@ -89,29 +89,65 @@ class HotkeyManager:
         config = load_config()
         profiles = config.get('profiles', [])
         self.hotkey_profiles.clear()
+        
+        # Clear all existing hotkeys first
+        keyboard.unhook_all()
+        
+        # Group profiles by hotkey and determine if any profile blocks the hotkey
+        hotkey_groups = {}  # hotkey: [(profile_index, priority, block_hotkey), ...]
+        
         for idx, profile in enumerate(profiles):
             hotkey = profile.get('hotkey', '')
             enabled = profile.get('enabled', True)
             priority = profile.get('priority', 1)
+            block_hotkey = profile.get('block_hotkey', True)
+            
             if hotkey and enabled:
                 hotkey_lc = hotkey.lower()
-                if hotkey_lc not in self.hotkey_profiles:
-                    self.hotkey_profiles[hotkey_lc] = []
-                self.hotkey_profiles[hotkey_lc].append((idx, priority))
-        for hotkey in self.hotkey_profiles:
-            self.hotkey_profiles[hotkey].sort(key=lambda x: x[1], reverse=False)
-            self.hotkey_profiles[hotkey] = [idx for idx, _ in self.hotkey_profiles[hotkey]]
-        keyboard.unhook_all()
-        for hotkey in self.hotkey_profiles:
+                if hotkey_lc not in hotkey_groups:
+                    hotkey_groups[hotkey_lc] = []
+                hotkey_groups[hotkey_lc].append((idx, priority, block_hotkey))
+        
+        # Process each hotkey group
+        for hotkey_lc, profile_data in hotkey_groups.items():
+            # Sort by priority (lower numbers first)
+            profile_data.sort(key=lambda x: x[1], reverse=False)
+            
+            # Check if any profile in this group blocks the hotkey
+            should_block = any(block for _, _, block in profile_data)
+            
+            # Store profile indices for execution
+            self.hotkey_profiles[hotkey_lc] = [idx for idx, _, _ in profile_data]
+            
+            # Register the hotkey with appropriate blocking behavior
             try:
-                keyboard.add_hotkey(hotkey, lambda h=hotkey: self.execute_hotkey_profiles(h))
+                if should_block:
+                    keyboard.add_hotkey(hotkey_lc, lambda h=hotkey_lc: self.execute_hotkey_profiles(h), suppress=True)
+                else:
+                    keyboard.add_hotkey(hotkey_lc, lambda h=hotkey_lc: self.execute_hotkey_profiles(h), suppress=False)
+                
                 profile_names = []
-                for idx in self.hotkey_profiles[hotkey]:
+                for idx in self.hotkey_profiles[hotkey_lc]:
                     profile_name = profiles[idx].get('name', f'Profile {idx+1}')
                     profile_names.append(profile_name)
-                logger.info(f"✅ Registered hotkey '{hotkey.upper()}' for profiles: {', '.join(profile_names)}")
+                
+                block_status = "blocked" if should_block else "not blocked"
+                logger.info(f"✅ Registered hotkey '{hotkey_lc.upper()}' ({block_status}) for profiles: {', '.join(profile_names)}")
+                
+                # Log which profiles are blocking the hotkey
+                if should_block:
+                    blocking_profiles = []
+                    for idx in self.hotkey_profiles[hotkey_lc]:
+                        if profiles[idx].get('block_hotkey', True):
+                            profile_name = profiles[idx].get('name', f'Profile {idx+1}')
+                            blocking_profiles.append(profile_name)
+                    if blocking_profiles:
+                        logger.info(f"🔒 Hotkey '{hotkey_lc.upper()}' will be intercepted by: {', '.join(blocking_profiles)}")
+                
             except Exception as e:
-                logger.error(f"Error registering hotkey '{hotkey}': {e}")
+                logger.error(f"Error registering hotkey '{hotkey_lc}': {e}")
+        
+        # Log disabled profiles
         for idx, profile in enumerate(profiles):
             hotkey = profile.get('hotkey', '')
             enabled = profile.get('enabled', True)

@@ -9,7 +9,7 @@ import sys
 from typing import Dict, Any, List
 
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 
 def get_exe_directory() -> str:
@@ -35,7 +35,8 @@ def create_default_config(config_path: str) -> None:
                 "apps": ["Discord.exe"],
                 "enabled": True,
                 "priority": 1,
-                "invert": False
+                "invert": False,
+                "block_hotkey": True
             }
         ],
         "autostart": False,
@@ -57,7 +58,8 @@ def migrate_old_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
             "apps": [old_config.get("app_name", "Discord.exe") or "system"],
             "enabled": True,
             "priority": 1,
-            "invert": False
+            "invert": False,
+            "block_hotkey": True
         }
         return {"version": CONFIG_VERSION, "profiles": [profile], "autostart": False, "minimize_on_start": False}
     
@@ -65,6 +67,13 @@ def migrate_old_config(old_config: Dict[str, Any]) -> Dict[str, Any]:
         old_config['autostart'] = False
     if 'minimize_on_start' not in old_config:
         old_config['minimize_on_start'] = False
+    
+    # Add block_hotkey to existing profiles if not present
+    if 'profiles' in old_config:
+        for profile in old_config['profiles']:
+            if 'block_hotkey' not in profile:
+                profile['block_hotkey'] = True
+    
     return old_config
 
 

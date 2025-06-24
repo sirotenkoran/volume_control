@@ -44,6 +44,7 @@ class AppVolumeControlGUI:
         self.app_var = None
         self.enabled_var = None
         self.invert_var = None
+        self.block_hotkey_var = None
         self.autostart_var = None
         self.minimize_var = None
         
@@ -87,6 +88,7 @@ class AppVolumeControlGUI:
         self.app_var = tk.StringVar()
         self.enabled_var = tk.BooleanVar()
         self.invert_var = tk.BooleanVar()
+        self.block_hotkey_var = tk.BooleanVar()
         self.autostart_var = tk.BooleanVar()
         self.minimize_var = tk.BooleanVar()
     
@@ -167,7 +169,14 @@ class AppVolumeControlGUI:
         notebook.add(log_tab, text="Activity Log")
         self._create_log_section(log_tab)
 
-        # --- TAB 3: SETTINGS (Global Settings) ---
+        # --- TAB 3: HOTKEY CONFLICTS ---
+        conflicts_tab = ttk.Frame(notebook, style='White.TFrame')
+        conflicts_tab.rowconfigure(0, weight=1)
+        conflicts_tab.columnconfigure(0, weight=1)
+        notebook.add(conflicts_tab, text="Hotkey Conflicts")
+        self._create_conflicts_section(conflicts_tab)
+
+        # --- TAB 4: SETTINGS (Global Settings) ---
         settings_tab = ttk.Frame(notebook, style='White.TFrame')
         settings_tab.columnconfigure(0, weight=1)
         notebook.add(settings_tab, text="Settings")
@@ -324,6 +333,8 @@ class AppVolumeControlGUI:
         enabled_chk.pack(side='left', padx=(0, 20))
         invert_chk = ttk.Checkbutton(profile_info_frame, text="Invert Logic", variable=self.invert_var, command=self._on_invert_changed, style='White.TCheckbutton')
         invert_chk.pack(side='left', padx=(0, 20))
+        block_hotkey_chk = ttk.Checkbutton(profile_info_frame, text="Intercept hotkey (prevent reaching other apps)", variable=self.block_hotkey_var, command=self._on_block_hotkey_changed, style='White.TCheckbutton')
+        block_hotkey_chk.pack(side='left', padx=(0, 20))
         # --- PROFILE SETTINGS (fields) ---
         settings_frame = ttk.LabelFrame(profile_frame, text="Profile Settings", padding=10, style='White.TLabelframe')
         settings_frame.grid(row=2, column=0, columnspan=3, sticky='ew', pady=(10, 0))
@@ -336,6 +347,7 @@ class AppVolumeControlGUI:
         hotkey_hint = ttk.Label(settings_frame, text="Click and press a hotkey. Press Esc to clear.", foreground='#888', style='White.TLabel')
         hotkey_hint.grid(row=0, column=2, sticky='w', padx=(6,0))
         self._setup_hotkey_recording(hotkey_entry)
+        
         # Low volume
         ttk.Label(settings_frame, text="Low volume (%):", style='White.TLabel').grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
         low_entry = ttk.Entry(settings_frame, textvariable=self.low_var, width=5, justify='center')
@@ -385,6 +397,141 @@ class AppVolumeControlGUI:
                 self.log_text.insert(tk.END, msg)
             self._log_buffer.clear()
     
+    def _create_conflicts_section(self, parent):
+        """Create the hotkey conflicts section"""
+        conflicts_frame = ttk.Frame(parent, style='White.TFrame')
+        conflicts_frame.grid(row=0, column=0, sticky='nsew', padx=8, pady=8)
+        conflicts_frame.columnconfigure(0, weight=1)
+        conflicts_frame.rowconfigure(1, weight=1)
+        
+        # Title
+        title_label = ttk.Label(conflicts_frame, text="Hotkey Conflicts Overview", font=('TkDefaultFont', 12, 'bold'), style='White.TLabel')
+        title_label.grid(row=0, column=0, sticky='w', pady=(0, 10))
+        
+        # Description
+        desc_label = ttk.Label(conflicts_frame, text="This tab shows all hotkey conflicts and which profiles are intercepting hotkeys (preventing them from reaching other applications).", 
+                              foreground='#666', wraplength=500, justify='left', style='White.TLabel')
+        desc_label.grid(row=1, column=0, sticky='w', pady=(0, 15))
+        
+        # Conflicts list
+        self.conflicts_text = scrolledtext.ScrolledText(conflicts_frame, height=15, background='white', font=('Consolas', 9))
+        self.conflicts_text.grid(row=2, column=0, sticky='nsew', pady=(0, 10))
+        
+        # Refresh button
+        refresh_btn = ttk.Button(conflicts_frame, text="Refresh Conflicts", command=self._refresh_conflicts_display, style='White.TButton')
+        refresh_btn.grid(row=3, column=0, sticky='w', pady=(0, 10))
+        
+        # Status label
+        self.conflicts_status_label = ttk.Label(conflicts_frame, text="", foreground='#666', style='White.TLabel')
+        self.conflicts_status_label.grid(row=4, column=0, sticky='w')
+        
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+    
+    def _refresh_conflicts_display(self):
+        """Refresh the conflicts display"""
+        if not hasattr(self, 'conflicts_text'):
+            return
+        
+        self.conflicts_text.delete(1.0, tk.END)
+        profiles = self.config.get('profiles', [])
+        
+        # Group profiles by hotkey
+        hotkey_groups = {}
+        for idx, profile in enumerate(profiles):
+            hotkey = profile.get('hotkey', '').lower()
+            if hotkey:
+                if hotkey not in hotkey_groups:
+                    hotkey_groups[hotkey] = []
+                hotkey_groups[hotkey].append((idx, profile))
+        
+        if not hotkey_groups:
+            self.conflicts_text.insert(tk.END, "No hotkeys configured.\n")
+            self.conflicts_status_label.config(text="Status: No hotkeys found")
+            return
+        
+        # Find conflicts
+        conflicts_found = False
+        
+        for hotkey, profile_list in hotkey_groups.items():
+            if len(profile_list) > 1:
+                # Check if any ENABLED profile blocks this hotkey
+                any_enabled_blocks = any(
+                    profile.get('block_hotkey', True) and profile.get('enabled', True) 
+                    for _, profile in profile_list
+                )
+                
+                # Only show as conflict if there are enabled profiles that block
+                if any_enabled_blocks:
+                    conflicts_found = True
+                    
+                    # Header
+                    self.conflicts_text.insert(tk.END, f"⚠️  CONFLICT: Hotkey '{hotkey.upper()}' will be INTERCEPTED\n", "conflict")
+                    
+                    self.conflicts_text.insert(tk.END, f"{'='*60}\n")
+                    
+                    # List profiles
+                    for idx, profile in profile_list:
+                        name = profile.get('name', f'Profile {idx+1}')
+                        enabled = profile.get('enabled', True)
+                        block_hotkey = profile.get('block_hotkey', True)
+                        
+                        status = "ENABLED" if enabled else "DISABLED"
+                        block_status = "INTERCEPTS" if block_hotkey else "PASSES THROUGH"
+                        
+                        if not enabled:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status})\n", "disabled")
+                        elif block_hotkey:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status}, {block_status})\n", "intercepts")
+                        else:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status}, {block_status})\n", "passes")
+                    
+                    self.conflicts_text.insert(tk.END, "\n")
+                    
+                    # Explanation
+                    self.conflicts_text.insert(tk.END, "  → This hotkey will NOT reach other applications because at least one ENABLED profile\n    has 'Intercept hotkey' enabled.\n\n", "explanation")
+                else:
+                    # Show as shared (no conflict) if no enabled profiles block
+                    self.conflicts_text.insert(tk.END, f"ℹ️  SHARED: Hotkey '{hotkey.upper()}' will be PASSED THROUGH\n", "shared")
+                    
+                    self.conflicts_text.insert(tk.END, f"{'='*60}\n")
+                    
+                    # List profiles
+                    for idx, profile in profile_list:
+                        name = profile.get('name', f'Profile {idx+1}')
+                        enabled = profile.get('enabled', True)
+                        block_hotkey = profile.get('block_hotkey', True)
+                        
+                        status = "ENABLED" if enabled else "DISABLED"
+                        block_status = "INTERCEPTS" if block_hotkey else "PASSES THROUGH"
+                        
+                        if not enabled:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status})\n", "disabled")
+                        elif block_hotkey:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status}, {block_status})\n", "intercepts")
+                        else:
+                            self.conflicts_text.insert(tk.END, f"  • {name} ({status}, {block_status})\n", "passes")
+                    
+                    self.conflicts_text.insert(tk.END, "\n")
+                    
+                    # Explanation
+                    self.conflicts_text.insert(tk.END, "  → This hotkey will be passed through to other applications because no ENABLED profile\n    has 'Intercept hotkey' enabled.\n\n", "explanation")
+        
+        if not conflicts_found:
+            self.conflicts_text.insert(tk.END, "✅ No hotkey conflicts found.\n\n")
+            self.conflicts_text.insert(tk.END, "All profiles use unique hotkeys or no hotkeys are configured.\n")
+            self.conflicts_status_label.config(text="Status: No conflicts found")
+        else:
+            self.conflicts_status_label.config(text="Status: Conflicts detected")
+        
+        # Configure text tags for colors
+        self.conflicts_text.tag_configure("conflict", foreground="#ff4444", font=('Consolas', 9, 'bold'))
+        self.conflicts_text.tag_configure("shared", foreground="#4444ff", font=('Consolas', 9, 'bold'))
+        self.conflicts_text.tag_configure("disabled", foreground="#888888")
+        self.conflicts_text.tag_configure("intercepts", foreground="#ff4444")
+        self.conflicts_text.tag_configure("passes", foreground="#228B22")  # Forest Green - darker green
+        self.conflicts_text.tag_configure("explanation", foreground="#666666", font=('Consolas', 8))
+
     def _setup_hotkey_recording(self, hotkey_entry):
         """Set up hotkey recording functionality"""
         from keyboard import hook, unhook_all
@@ -467,8 +614,11 @@ class AppVolumeControlGUI:
         hotkey_entry.bind('<FocusOut>', on_hotkey_focus_out)
         hotkey_entry.bind('<KeyPress-Escape>', on_hotkey_escape)
         
+        # Add trace to hotkey_var to check for conflicts
+        self.hotkey_var.trace('w', lambda *args: self._on_hotkey_changed())
+        
         # Store the hook function for later use
-        self.hotkey_hook = hotkey_hook 
+        self.hotkey_hook = hotkey_hook
 
     def log_message(self, message: str) -> None:
         """Add message to log display"""
@@ -487,6 +637,7 @@ class AppVolumeControlGUI:
         """Update the profile dropdown list"""
         profiles = self.config.get('profiles', [])
         profile_names = []
+        
         for i, profile in enumerate(profiles):
             name = profile.get('name', f'Profile {i+1}')
             profile_names.append(name)
@@ -498,6 +649,29 @@ class AppVolumeControlGUI:
             self.profile_var.set(profile_names[0])
         elif profile_names and self.profile_var.get() not in profile_names:
             self.profile_var.set(profile_names[0])
+    
+    def _create_tooltip(self, widget, text):
+        """Create a tooltip for a widget"""
+        def show_tooltip(event):
+            tooltip = tk.Toplevel()
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            
+            label = ttk.Label(tooltip, text=text, justify='left',
+                             background="#ffffe0", relief='solid', borderwidth=1,
+                             font=("TkDefaultFont", "8", "normal"))
+            label.pack()
+            
+            def hide_tooltip(event):
+                tooltip.destroy()
+            
+            widget.bind('<Leave>', hide_tooltip)
+            tooltip.bind('<Leave>', hide_tooltip)
+            
+            # Auto-hide after 3 seconds
+            tooltip.after(3000, tooltip.destroy)
+        
+        widget.bind('<Enter>', show_tooltip)
     
     def _get_current_profile_index(self) -> int:
         """Get the index of the currently selected profile"""
@@ -522,6 +696,10 @@ class AppVolumeControlGUI:
         self.app_var.set(','.join(profile.get('apps', [])))
         self.enabled_var.set(profile.get('enabled', True))
         self.invert_var.set(profile.get('invert', False))
+        self.block_hotkey_var.set(profile.get('block_hotkey', True))
+        
+        # Check for hotkey conflicts after loading
+        self._check_hotkey_conflicts(profile_index)
     
     def _add_new_profile(self) -> None:
         profiles = self.config.get('profiles', [])
@@ -533,7 +711,8 @@ class AppVolumeControlGUI:
             "apps": [],
             "enabled": True,
             "priority": 1,
-            "invert": False
+            "invert": False,
+            "block_hotkey": True
         }
         profiles.append(new_profile)
         self.config['profiles'] = profiles
@@ -545,6 +724,9 @@ class AppVolumeControlGUI:
         self.log_message("Перерегистрация всех хоткеев после добавления профиля...")
         hotkey_manager.register_all_profile_hotkeys()
         self.log_message(f"✅ Added new profile: {new_profile['name']}")
+        
+        # Update conflicts display
+        self._refresh_conflicts_display()
     
     def _on_enabled_changed(self) -> None:
         current_index = self._get_current_profile_index()
@@ -565,6 +747,9 @@ class AppVolumeControlGUI:
             status = "enabled" if new_enabled else "disabled"
             self.log_message(f"✅ {profile_name} {status}")
             self._settings_changed()
+            
+            # Update conflicts display
+            self._refresh_conflicts_display()
     
     def _on_invert_changed(self) -> None:
         """Handle profile invert logic change"""
@@ -590,6 +775,90 @@ class AppVolumeControlGUI:
             
             # Trigger settings changed to enable save button
             self._settings_changed()
+    
+    def _on_block_hotkey_changed(self) -> None:
+        """Handle profile block hotkey change"""
+        current_index = self._get_current_profile_index()
+        profiles = self.config.get('profiles', [])
+        if current_index >= len(profiles):
+            return
+        
+        profile = profiles[current_index]
+        old_block_hotkey = profile.get('block_hotkey', True)
+        new_block_hotkey = self.block_hotkey_var.get()
+        
+        if old_block_hotkey != new_block_hotkey:
+            profile['block_hotkey'] = new_block_hotkey
+            save_config(self.config)
+            
+            # Re-register hotkeys to apply new blocking behavior
+            hotkey_manager.clear_hotkeys()
+            self.log_message("Перерегистрация всех хоткеев после изменения блокировки...")
+            hotkey_manager.register_all_profile_hotkeys()
+            
+            # Update profile info
+            self._load_profile_to_ui(current_index)
+            
+            profile_name = profile.get('name', f'Profile {current_index + 1}')
+            status = "blocked" if new_block_hotkey else "not blocked"
+            self.log_message(f"✅ {profile_name} hotkey: {status}")
+            
+            # Check for conflicts after changing block_hotkey
+            self._check_hotkey_conflicts(current_index)
+            
+            # Trigger settings changed to enable save button
+            self._settings_changed()
+            
+            # Update conflicts display
+            self._refresh_conflicts_display()
+    
+    def _check_hotkey_conflicts(self, current_profile_index: int = None) -> None:
+        """Check for hotkey conflicts and show warnings"""
+        if current_profile_index is None:
+            current_profile_index = self._get_current_profile_index()
+        
+        profiles = self.config.get('profiles', [])
+        if current_profile_index >= len(profiles):
+            return
+        
+        # Get current hotkey from UI (not from saved config)
+        current_hotkey = self.hotkey_var.get().strip().lower()
+        
+        if not current_hotkey:
+            return
+        
+        # Find all profiles with the same hotkey (including current one from UI)
+        conflicting_profiles = []
+        for idx, profile in enumerate(profiles):
+            profile_hotkey = profile.get('hotkey', '').lower()
+            if idx != current_profile_index and profile_hotkey == current_hotkey:
+                conflicting_profiles.append((idx, profile))
+        
+        if conflicting_profiles:
+            # Check if any conflicting profile blocks the hotkey
+            any_blocks = any(profile.get('block_hotkey', True) for _, profile in conflicting_profiles)
+            # Get current block_hotkey from UI
+            current_blocks = self.block_hotkey_var.get()
+            
+            if any_blocks or current_blocks:
+                # Show warning about blocking behavior
+                conflict_names = [profile.get('name', f'Profile {idx+1}') for idx, profile in conflicting_profiles]
+                current_name = profiles[current_profile_index].get('name', f'Profile {current_profile_index+1}')
+                
+                if any_blocks and not current_blocks:
+                    message = f"⚠️ Warning: Hotkey '{current_hotkey.upper()}' will be intercepted because profile(s) {', '.join(conflict_names)} have 'Intercept hotkey' enabled."
+                elif current_blocks and not any_blocks:
+                    message = f"⚠️ Warning: Hotkey '{current_hotkey.upper()}' will be intercepted because this profile has 'Intercept hotkey' enabled."
+                else:
+                    message = f"⚠️ Warning: Hotkey '{current_hotkey.upper()}' will be intercepted because multiple profiles have 'Intercept hotkey' enabled."
+                
+                self.log_message(message)
+    
+    def _on_hotkey_changed(self) -> None:
+        """Handle hotkey change and check for conflicts"""
+        # This will be called when hotkey is changed
+        self._check_hotkey_conflicts()
+        self._settings_changed()
     
     def _delete_current_profile(self) -> None:
         current_index = self._get_current_profile_index()
@@ -628,6 +897,9 @@ class AppVolumeControlGUI:
                 self._load_profile_to_ui(idx)
             self.log_message(f"✅ Deleted profile: {profile_name}")
             confirm.destroy()
+            
+            # Update conflicts display
+            self._refresh_conflicts_display()
         def on_cancel():
             confirm.destroy()
         ttk.Button(btn_frame, text="Delete", command=on_delete).pack(side='left', padx=8)
@@ -687,6 +959,9 @@ class AppVolumeControlGUI:
             
             rename_win.destroy()
             self.log_message(f"✅ Renamed profile to: {new_name}")
+            
+            # Update conflicts display
+            self._refresh_conflicts_display()
         
         def on_cancel():
             rename_win.destroy()
@@ -724,6 +999,7 @@ class AppVolumeControlGUI:
             new_apps = [t.strip() for t in self.app_var.get().split(',') if t.strip()]
             new_enabled = self.enabled_var.get()
             new_invert = self.invert_var.get()
+            new_block_hotkey = self.block_hotkey_var.get()
             if new_priority < 1 or new_priority > 100:
                 messagebox.showerror("Priority Error", "Priority must be between 1 and 100.", parent=self.root)
                 self.priority_var.set(old_priority)
@@ -742,6 +1018,7 @@ class AppVolumeControlGUI:
             profile['apps'] = new_apps
             profile['enabled'] = new_enabled
             profile['invert'] = new_invert
+            profile['block_hotkey'] = new_block_hotkey
             save_config(self.config)
             if old_apps != new_apps:
                 self.log_message(f"✅ App/Apps changed to: {', '.join(new_apps)} (session cache cleared)")
@@ -757,7 +1034,14 @@ class AppVolumeControlGUI:
             self._load_profile_to_ui(current_index)
             self._update_tray_tooltip()
             self.log_message("✅ Configuration saved!")
+            
+            # Check for conflicts after saving
+            self._check_hotkey_conflicts(current_index)
+            
             self.save_btn.config(state='disabled')
+            
+            # Update conflicts display
+            self._refresh_conflicts_display()
         except ValueError:
             self.log_message("❌ Error saving: Invalid number for volume or priority.")
             messagebox.showerror("Error", "Could not save settings: please enter valid numbers for volume (e.g., 20) and priority (1-100).", parent=self.root)
@@ -789,6 +1073,8 @@ class AppVolumeControlGUI:
             elif self.enabled_var.get() != profile.get('enabled', True):
                 changed = True
             elif self.invert_var.get() != profile.get('invert', False):
+                changed = True
+            elif self.block_hotkey_var.get() != profile.get('block_hotkey', True):
                 changed = True
         except Exception:
             changed = True
@@ -1028,6 +1314,9 @@ class AppVolumeControlGUI:
         
         # Call immediately after start for correct button state
         self._settings_changed()
+        
+        # Initialize conflicts display
+        self._refresh_conflicts_display()
     
     def run(self) -> None:
         """Run the GUI main loop"""
