@@ -22,10 +22,9 @@ class HotkeyManager:
         self.profile_states: Dict[int, Dict[str, bool]] = {}  # profile_index: {"volume_low": bool}
     
     def is_valid_hotkey(self, hotkey: str) -> bool:
-        """Validate hotkey format"""
-        # Allow only Latin, digits, ctrl, alt, shift, win, f1-f24, +
+        """Validate hotkey format (case-insensitive)"""
         pattern = r'^(ctrl\+|alt\+|shift\+|win\+)*([a-z0-9]|f([1-9]|1[0-9]|2[0-4]))(\+([a-z0-9]|ctrl|alt|shift|win|f([1-9]|1[0-9]|2[0-4])))*$'
-        return bool(re.fullmatch(pattern, hotkey))
+        return bool(re.fullmatch(pattern, hotkey.lower()))
     
     def toggle_profile_volume(self, profile_index: int, hotkey_state: Dict[str, bool] = None) -> None:
         """Toggle volume for a specific profile"""
@@ -74,55 +73,40 @@ class HotkeyManager:
                     logger.info(f"[{profile_name}] App volumes {'restored' if not hotkey_state['volume_low'] else 'lowered'} to {target_volume}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
     
     def execute_hotkey_profiles(self, hotkey: str) -> None:
-        """Execute all profiles for a given hotkey in priority order"""
-        if hotkey not in self.hotkey_profiles:
+        """Execute all profiles for a given hotkey in priority order (case-insensitive)"""
+        hotkey_lc = hotkey.lower()
+        if hotkey_lc not in self.hotkey_profiles:
             return
-        
-        profile_indices = self.hotkey_profiles[hotkey]
+        profile_indices = self.hotkey_profiles[hotkey_lc]
         if not profile_indices:
             return
-        
-        # Get or create global state for this hotkey
-        if hotkey not in self.hotkey_states:
-            self.hotkey_states[hotkey] = {"volume_low": False}
-        
-        hotkey_state = self.hotkey_states[hotkey]
-        
-        # Execute all profiles for this hotkey
+        if hotkey_lc not in self.hotkey_states:
+            self.hotkey_states[hotkey_lc] = {"volume_low": False}
+        hotkey_state = self.hotkey_states[hotkey_lc]
         for profile_index in profile_indices:
             try:
                 self.toggle_profile_volume(profile_index, hotkey_state)
             except Exception as e:
                 logger.error(f"❌ Error executing profile {profile_index}: {e}")
-        
-        # Update global state AFTER all profiles have been processed
         hotkey_state["volume_low"] = not hotkey_state["volume_low"]
     
     def register_all_profile_hotkeys(self) -> None:
-        """Register all hotkeys for all profiles"""
+        """Register all hotkeys for all profiles (case-insensitive)"""
         config = load_config()
         profiles = config.get('profiles', [])
-        
-        # Clear previous mappings
         self.hotkey_profiles.clear()
-        
-        # Group profiles by hotkey
         for idx, profile in enumerate(profiles):
             hotkey = profile.get('hotkey', '')
             enabled = profile.get('enabled', True)
             priority = profile.get('priority', 1)
-            
             if hotkey and enabled:
-                if hotkey not in self.hotkey_profiles:
-                    self.hotkey_profiles[hotkey] = []
-                self.hotkey_profiles[hotkey].append((idx, priority))
-        
-        # Sort each hotkey group by priority (higher priority LAST - so their settings don't get overwritten)
+                hotkey_lc = hotkey.lower()
+                if hotkey_lc not in self.hotkey_profiles:
+                    self.hotkey_profiles[hotkey_lc] = []
+                self.hotkey_profiles[hotkey_lc].append((idx, priority))
         for hotkey in self.hotkey_profiles:
-            self.hotkey_profiles[hotkey].sort(key=lambda x: x[1], reverse=False)  # Lower priority first
+            self.hotkey_profiles[hotkey].sort(key=lambda x: x[1], reverse=False)
             self.hotkey_profiles[hotkey] = [idx for idx, _ in self.hotkey_profiles[hotkey]]
-        
-        # Register hotkeys
         keyboard.unhook_all()
         for hotkey in self.hotkey_profiles:
             try:
@@ -134,8 +118,6 @@ class HotkeyManager:
                 logger.info(f"✅ Registered hotkey '{hotkey.upper()}' for profiles: {', '.join(profile_names)}")
             except Exception as e:
                 logger.error(f"Error registering hotkey '{hotkey}': {e}")
-        
-        # Log disabled profiles
         for idx, profile in enumerate(profiles):
             hotkey = profile.get('hotkey', '')
             enabled = profile.get('enabled', True)
@@ -144,8 +126,8 @@ class HotkeyManager:
                 logger.info(f"⏸️ Skipped disabled profile: {profile_name} (hotkey: {hotkey.upper()})")
     
     def clear_hotkeys(self) -> None:
-        """Clear all registered hotkeys"""
         keyboard.unhook_all()
+        logger.info("All hotkeys unregistered.")
         self.hotkey_profiles.clear()
         self.hotkey_states.clear()
         self.profile_states.clear()

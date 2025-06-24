@@ -465,7 +465,6 @@ class AppVolumeControlGUI:
         self.profile_info_label.config(text=info_text)
     
     def _add_new_profile(self) -> None:
-        """Add a new profile"""
         profiles = self.config.get('profiles', [])
         new_profile = {
             "name": f"Profile {len(profiles) + 1}",
@@ -480,44 +479,32 @@ class AppVolumeControlGUI:
         profiles.append(new_profile)
         self.config['profiles'] = profiles
         save_config(self.config)
-        
         self._update_profile_list()
         self.profile_var.set(new_profile['name'])
         self._load_profile_to_ui(len(profiles) - 1)
-        
-        # Re-register hotkeys for ALL profiles
         hotkey_manager.clear_hotkeys()
+        self.log_message("Перерегистрация всех хоткеев после добавления профиля...")
         hotkey_manager.register_all_profile_hotkeys()
-        
         self.log_message(f"✅ Added new profile: {new_profile['name']}")
     
     def _on_enabled_changed(self) -> None:
-        """Handle profile enabled/disabled state change"""
         current_index = self._get_current_profile_index()
         profiles = self.config.get('profiles', [])
         if current_index >= len(profiles):
             return
-        
         profile = profiles[current_index]
         old_enabled = profile.get('enabled', True)
         new_enabled = self.enabled_var.get()
-        
         if old_enabled != new_enabled:
             profile['enabled'] = new_enabled
             save_config(self.config)
-            
-            # Re-register hotkeys for ALL profiles
             hotkey_manager.clear_hotkeys()
+            self.log_message("Перерегистрация всех хоткеев после изменения enabled...")
             hotkey_manager.register_all_profile_hotkeys()
-            
-            # Update profile info
             self._load_profile_to_ui(current_index)
-            
             profile_name = profile.get('name', f'Profile {current_index + 1}')
             status = "enabled" if new_enabled else "disabled"
             self.log_message(f"✅ {profile_name} {status}")
-            
-            # Trigger settings changed to enable save button
             self._settings_changed()
     
     def _on_invert_changed(self) -> None:
@@ -546,35 +533,26 @@ class AppVolumeControlGUI:
             self._settings_changed()
     
     def _delete_current_profile(self) -> None:
-        """Delete the currently selected profile"""
         current_index = self._get_current_profile_index()
         profiles = self.config.get('profiles', [])
-        
         if len(profiles) <= 1:
             messagebox.showwarning("Cannot Delete", "Cannot delete the last profile. At least one profile must remain.")
             return
-        
         profile_name = profiles[current_index].get('name', f'Profile {current_index + 1}')
         if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{profile_name}'?"):
             return
-        
-        # Remove the profile
         profiles.pop(current_index)
         self.config['profiles'] = profiles
         save_config(self.config)
-        
-        # Re-register hotkeys for ALL profiles
         hotkey_manager.clear_hotkeys()
+        self.log_message("Перерегистрация всех хоткеев после удаления профиля...")
         hotkey_manager.register_all_profile_hotkeys()
-        
-        # Update UI
         self._update_profile_list()
         if current_index >= len(profiles):
             current_index = len(profiles) - 1
         if profiles:
             self.profile_var.set(profiles[current_index].get('name', f'Profile {current_index + 1}'))
             self._load_profile_to_ui(current_index)
-        
         self.log_message(f"✅ Deleted profile: {profile_name}")
     
     def _rename_current_profile(self) -> None:
@@ -651,19 +629,16 @@ class AppVolumeControlGUI:
         self._settings_changed()
     
     def _save_settings(self) -> None:
-        """Save current profile settings"""
         try:
             current_index = self._get_current_profile_index()
             profiles = self.config.get('profiles', [])
             if current_index >= len(profiles):
                 return
-            
             profile = profiles[current_index]
             old_hotkey = profile.get('hotkey', '')
             old_apps = profile.get('apps', [])
             old_enabled = profile.get('enabled', True)
             old_priority = profile.get('priority', 1)
-
             new_hotkey = self.hotkey_var.get().strip()
             new_low_vol = int(self.low_var.get())
             new_high_vol = int(self.high_var.get())
@@ -671,13 +646,10 @@ class AppVolumeControlGUI:
             new_apps = [t.strip() for t in self.app_var.get().split(',') if t.strip()]
             new_enabled = self.enabled_var.get()
             new_invert = self.invert_var.get()
-            
-            # Validate priority
             if new_priority < 1 or new_priority > 100:
                 messagebox.showerror("Priority Error", "Priority must be between 1 and 100.")
                 self.priority_var.set(old_priority)
                 return
-            
             if not new_hotkey:
                 profile['hotkey'] = ''
             else:
@@ -686,41 +658,29 @@ class AppVolumeControlGUI:
                     self.hotkey_var.set(old_hotkey)
                     return
                 profile['hotkey'] = new_hotkey
-            
             profile['low_volume'] = new_low_vol
             profile['high_volume'] = new_high_vol
             profile['priority'] = new_priority
             profile['apps'] = new_apps
             profile['enabled'] = new_enabled
             profile['invert'] = new_invert
-
             save_config(self.config)
-
-            # If app name changed, clear the session cache to force refetch
             if old_apps != new_apps:
                 audio_manager.clear_cache()
-                self.log_message(f"✅ App/Apps changed to: {', '.join(new_apps)}")
-
-            # Re-register hotkeys if hotkey, priority, or enabled status changed
+                self.log_message(f"✅ App/Apps changed to: {', '.join(new_apps)} (session cache cleared)")
             if old_hotkey.lower() != new_hotkey.lower() or old_enabled != new_enabled or old_priority != new_priority:
                 try:
-                    # Re-register all hotkeys for all profiles
                     hotkey_manager.clear_hotkeys()
+                    self.log_message("Перерегистрация всех хоткеев после изменения настроек профиля...")
                     hotkey_manager.register_all_profile_hotkeys()
                     self.log_message(f"✅ Hotkeys updated for all profiles")
                 except Exception as e:
                     self.log_message(f"❌ Error updating hotkeys: {e}")
                     messagebox.showwarning("Hotkey Error", f"Could not update hotkeys.\nPlease restart the app.\nError: {e}")
-            
-            # Update profile info
             self._load_profile_to_ui(current_index)
-            
-            # Update tray icon tooltip
             self._update_tray_tooltip()
-
             self.log_message("✅ Configuration saved!")
             self.save_btn.config(state='disabled')
-
         except ValueError:
             self.log_message("❌ Error saving: Invalid number for volume or priority.")
             messagebox.showerror("Error", "Could not save settings: please enter valid numbers for volume (e.g., 20) and priority (1-100).")
