@@ -1,6 +1,5 @@
 # Final Project Structure - AppVolumeControl
 
-
 ## 📁 Project Structure
 
 ```
