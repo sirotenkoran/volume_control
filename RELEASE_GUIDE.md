@@ -7,6 +7,28 @@ This guide explains how to create releases and manage the automated build proces
 - GitHub repository with Actions enabled
 - Write access to the repository
 - Git configured locally
+- Python virtual environment with dependencies installed
+
+## 🔧 Setup Dependencies
+
+Before creating releases, make sure your environment is properly set up:
+
+```bash
+# Create virtual environment (if not exists)
+python -m venv venv
+
+# Activate virtual environment
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install PyInstaller
+pip install pyinstaller
+```
 
 ## 🔄 Automated Build Process
 
@@ -24,28 +46,31 @@ This guide explains how to create releases and manage the automated build proces
 
 ## 🏷️ Creating a Release
 
-### Option 1: Using the Automated Script (Recommended)
+### Option 1: Using PowerShell Script (Recommended for Windows)
 
-The easiest way to create a release is using the included `create_release.bat` script:
+The PowerShell script handles quotes properly and provides better error handling:
+
+```powershell
+# Create a release with version v1.2.3
+.\create_release.ps1 -Version "v1.2.3"
+
+# Create a release with version and release notes
+.\create_release.ps1 -Version "v1.2.3" -ReleaseNotes "Bug fixes and performance improvements"
+```
+
+### Option 2: Using Batch Script
+
+The batch script also works but may have issues with quotes in PowerShell:
 
 ```bash
 # Create a release with version v1.2.3
 create_release.bat v1.2.3
 
-# Create a release with version and release notes
-create_release.bat v1.2.3 "Bug fixes and performance improvements"
+# Create a release with version and release notes (use single quotes in PowerShell)
+create_release.bat v1.2.3 'Bug fixes and performance improvements'
 ```
 
-This script will:
-- ✅ Check if you're in a git repository
-- ✅ Verify there are no uncommitted changes
-- ✅ Check if the tag already exists
-- ✅ Build the executable locally
-- ✅ Create the git tag (with optional release notes)
-- ✅ Push the tag to GitHub
-- ✅ Provide next steps and monitoring links
-
-### Option 2: Manual Process
+### Option 3: Manual Process
 
 If you prefer to do it manually:
 
@@ -80,18 +105,27 @@ git push origin v1.2.3
 
 ## 📝 Adding Release Notes
 
-### Method 1: Using the Script (Recommended)
+### Method 1: Using PowerShell Script (Recommended)
+```powershell
+.\create_release.ps1 -Version "v1.2.3" -ReleaseNotes "Bug fixes and performance improvements"
+```
+
+### Method 2: Using Batch Script
 ```bash
+# In PowerShell, use single quotes
+create_release.bat v1.2.3 'Bug fixes and performance improvements'
+
+# In Command Prompt, use double quotes
 create_release.bat v1.2.3 "Bug fixes and performance improvements"
 ```
 
-### Method 2: Manual Annotated Tag
+### Method 3: Manual Annotated Tag
 ```bash
 git tag -a v1.2.3 -m "Bug fixes and performance improvements"
 git push origin v1.2.3
 ```
 
-### Method 3: Edit After Creation
+### Method 4: Edit After Creation
 1. Create the release using any method above
 2. Go to GitHub → Releases
 3. Click "Edit" on the created release
@@ -117,7 +151,24 @@ If you need to create a release manually:
 
 ## 🐛 Troubleshooting
 
-### Build Fails
+### Build Fails - PyInstaller Not Found
+**Error**: `'pyinstaller' is not recognized as an internal or external command`
+
+**Solution**:
+1. Activate your virtual environment:
+   ```bash
+   venv\Scripts\activate
+   ```
+2. Install PyInstaller:
+   ```bash
+   pip install pyinstaller
+   ```
+3. Try building again:
+   ```bash
+   build.bat
+   ```
+
+### Build Fails - Other Issues
 - Check the Actions logs for error details
 - Verify all dependencies are in `requirements.txt`
 - Ensure `icon.ico` exists in the root directory
@@ -133,6 +184,12 @@ If you need to create a release manually:
 - Verify the build step completed successfully
 - Check that the file path in the workflow is correct
 - Ensure the exe file was created in the `dist/` folder
+
+### PowerShell Quote Issues
+If you get quote-related errors in PowerShell:
+1. Use the PowerShell script: `.\create_release.ps1`
+2. Or use single quotes: `create_release.bat v1.2.3 'Bug fixes'`
+3. Or run in Command Prompt instead of PowerShell
 
 ## 📝 Best Practices
 
@@ -165,6 +222,9 @@ Use semantic versioning: `MAJOR.MINOR.PATCH`
 Before creating a release, ensure:
 
 - [ ] All changes are committed and pushed
+- [ ] Virtual environment is activated
+- [ ] Dependencies are installed: `pip install -r requirements.txt`
+- [ ] PyInstaller is installed: `pip install pyinstaller`
 - [ ] Local build works: `build.bat`
 - [ ] Application runs correctly: `python main.py`
 - [ ] Tests pass (if any)
@@ -175,15 +235,23 @@ Before creating a release, ensure:
 ## 🎯 Quick Commands
 
 ```bash
+# Setup environment
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+pip install pyinstaller
+
 # Build locally
 build.bat
 
 # Test locally
 python main.py
 
-# Create and push a release
-git tag v1.2.3
-git push origin v1.2.3
+# Create and push a release (PowerShell)
+.\create_release.ps1 -Version "v1.2.3" -ReleaseNotes "Bug fixes"
+
+# Create and push a release (Batch)
+create_release.bat v1.2.3 "Bug fixes"
 
 # Check build status
 # Go to: https://github.com/sirotenkoran/volume_control/actions

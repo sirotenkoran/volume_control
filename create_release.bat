@@ -1,4 +1,6 @@
 @echo off
+setlocal enabledelayedexpansion
+
 echo 🚀 AppVolumeControl Release Creator
 echo =================================
 
@@ -13,12 +15,25 @@ if "%1"=="" (
 )
 
 set VERSION=%1
-set RELEASE_NOTES=%2
+
+REM Handle release notes - collect all remaining arguments
+set RELEASE_NOTES=
+shift
+:collect_notes
+if not "%1"=="" (
+    if defined RELEASE_NOTES (
+        set "RELEASE_NOTES=!RELEASE_NOTES! %1"
+    ) else (
+        set "RELEASE_NOTES=%1"
+    )
+    shift
+    goto collect_notes
+)
 
 echo.
 echo 📋 Creating release for version: %VERSION%
-if not "%RELEASE_NOTES%"=="" (
-    echo 📝 Release notes: %RELEASE_NOTES%
+if defined RELEASE_NOTES (
+    echo 📝 Release notes: !RELEASE_NOTES!
 )
 echo.
 
@@ -64,9 +79,9 @@ echo.
 
 REM Create and push the tag
 echo 🏷️  Creating tag: %VERSION%
-if not "%RELEASE_NOTES%"=="" (
-    echo 📝 Adding release notes: %RELEASE_NOTES%
-    git tag -a %VERSION% -m "%RELEASE_NOTES%"
+if defined RELEASE_NOTES (
+    echo 📝 Adding release notes: !RELEASE_NOTES!
+    git tag -a %VERSION% -m "!RELEASE_NOTES!"
 ) else (
     git tag %VERSION%
 )
@@ -87,8 +102,8 @@ if errorlevel 1 (
 
 echo.
 echo 🎉 Release %VERSION% created successfully!
-if not "%RELEASE_NOTES%"=="" (
-    echo 📝 Release notes included: %RELEASE_NOTES%
+if defined RELEASE_NOTES (
+    echo 📝 Release notes included: !RELEASE_NOTES!
 )
 echo.
 echo 📋 Next steps:
