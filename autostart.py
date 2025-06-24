@@ -32,7 +32,7 @@ def add_to_startup() -> bool:
         shortcut = shell.CreateShortCut(shortcut_path)
         shortcut.Targetpath = target
         shortcut.WorkingDirectory = workdir
-        
+        shortcut.Arguments = "--autostart"
         if os.path.exists(icon):
             shortcut.IconLocation = icon
         

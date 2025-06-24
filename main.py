@@ -52,7 +52,8 @@ def main():
         hotkey_manager.register_all_profile_hotkeys()
         
         # Create and initialize GUI
-        gui = AppVolumeControlGUI()
+        is_autostart = '--autostart' in sys.argv
+        gui = AppVolumeControlGUI(is_autostart=is_autostart)
         gui.create_main_window()
         gui.initialize()
         

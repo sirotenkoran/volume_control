@@ -26,13 +26,14 @@ logger = logging.getLogger(__name__)
 class AppVolumeControlGUI:
     """Main GUI class for App Volume Control"""
     
-    def __init__(self):
+    def __init__(self, is_autostart=False):
         self.root = None
         self.config = None
         self.tray_icon = None
         self.log_text = None
         self._log_buffer = []  # Буфер для логов до инициализации log_text
         self._log_handler = None  # Для кастомного лог-хендлера
+        self.is_autostart = is_autostart
         
         # UI variables - will be initialized after root window is created
         self.profile_var = None
@@ -176,7 +177,7 @@ class AppVolumeControlGUI:
         startup_settings_frame.columnconfigure(0, weight=1)
         autostart_chk = ttk.Checkbutton(startup_settings_frame, text="Start with Windows", variable=self.autostart_var, command=self._on_autostart_toggle, style='White.TCheckbutton')
         autostart_chk.grid(row=0, column=0, sticky='w', pady=(0, 5))
-        minimize_chk = ttk.Checkbutton(startup_settings_frame, text="Minimize to tray on startup", variable=self.minimize_var, command=self._on_minimize_toggle, style='White.TCheckbutton')
+        minimize_chk = ttk.Checkbutton(startup_settings_frame, text="Minimize to tray when started with Windows", variable=self.minimize_var, command=self._on_minimize_toggle, style='White.TCheckbutton')
         minimize_chk.grid(row=1, column=0, sticky='w')
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -1006,7 +1007,7 @@ class AppVolumeControlGUI:
                         self.log_message(f"  {i+1}. PID: {session.pid}")
         
         # Auto-minimize if configured
-        if self.config.get('minimize_on_start', False):
+        if self.config.get('minimize_on_start', False) and self.is_autostart:
             self.root.after(100, self._minimize_to_tray)
         
         # Call immediately after start for correct button state
