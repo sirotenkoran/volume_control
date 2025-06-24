@@ -144,6 +144,7 @@ class AppVolumeControlGUI:
         style.configure('White.TCheckbutton', background='white')
         style.configure('White.TCombobox', fieldbackground='white', background='white')
         style.configure('White.TButton', background='white')
+        style.configure('TNotebook.Tab', padding=(10, 4, 10, 4))
 
         # --- TAB 1: PROFILES ---
         profiles_frame = ttk.Frame(notebook, style='White.TFrame')
