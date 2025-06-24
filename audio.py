@@ -46,21 +46,11 @@ class AudioManager:
     """Manages audio sessions and volume control operations"""
     
     def __init__(self):
-        # Кэш теперь по ключу tuple(app_names)
-        self.cached_sessions: Dict[tuple, List[AudioSession]] = {}
-        self.last_session_check: Dict[tuple, float] = {}
-        self.session_cache_duration = 10  # seconds
+        self.session_cache_duration = 10  # seconds (больше не используется)
     
-    def get_app_sessions(self, app_names: List[str], use_cache: bool = True) -> List[AudioSession]:
-        """Get audio sessions for specified app names with caching per app set"""
+    def get_app_sessions(self, app_names: List[str]) -> List[AudioSession]:
+        """Get audio sessions for specified app names (без кэша, всегда свежий список)"""
         app_key = tuple(sorted([n.lower() for n in app_names]))
-        current_time = time.time()
-        if use_cache:
-            if (app_key in self.last_session_check and
-                current_time - self.last_session_check[app_key] < self.session_cache_duration and
-                app_key in self.cached_sessions):
-                return self.cached_sessions[app_key]
-        # Refresh sessions
         sessions = AudioUtilities.GetAllSessions()
         found_sessions = []
         for session in sessions:
@@ -78,23 +68,14 @@ class AudioManager:
                     found_sessions.append(AudioSession(session_info))
                 except Exception as e:
                     logger.debug(f"Failed to get volume interface for {proc.name()}: {e}")
-        # Update cache
-        self.cached_sessions[app_key] = found_sessions
-        self.last_session_check[app_key] = current_time
         return found_sessions
-    
-    def clear_cache(self) -> None:
-        """Clear the session cache to force refresh"""
-        self.cached_sessions = {}
-        self.last_session_check = {}
     
     def set_app_volumes(self, app_names: List[str], volume_percent: int, profile_name: str = "Unknown") -> bool:
         """Set volume for all sessions of specified apps (без кэша, всегда свежий список)"""
         app_targets = [t for t in app_names if t.lower() != 'system']
         if not app_targets:
             return True  # No app targets to set
-        # Не используем кэш для изменения громкости!
-        sessions = self.get_app_sessions(app_targets, use_cache=False)
+        sessions = self.get_app_sessions(app_targets)
         if not sessions:
             logger.warning(f"[{profile_name}] No sessions found for: {', '.join(app_targets)}")
             return False
