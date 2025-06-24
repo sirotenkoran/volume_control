@@ -330,7 +330,7 @@ class AppVolumeControlGUI:
         settings_frame.columnconfigure(1, weight=1)
         # Hotkey
         ttk.Label(settings_frame, text="Hotkey:", style='White.TLabel').grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
-        hotkey_entry = ttk.Entry(settings_frame, textvariable=self.hotkey_var, width=18)
+        hotkey_entry = ttk.Entry(settings_frame, textvariable=self.hotkey_var, width=18, justify='center')
         hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
         hotkey_entry.configure(background='white')
         hotkey_hint = ttk.Label(settings_frame, text="Click and press a hotkey. Press Esc to clear.", foreground='#888', style='White.TLabel')
@@ -338,17 +338,17 @@ class AppVolumeControlGUI:
         self._setup_hotkey_recording(hotkey_entry)
         # Low volume
         ttk.Label(settings_frame, text="Low volume (%):", style='White.TLabel').grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-        low_entry = ttk.Entry(settings_frame, textvariable=self.low_var, width=5)
+        low_entry = ttk.Entry(settings_frame, textvariable=self.low_var, width=5, justify='center')
         low_entry.grid(row=1, column=1, sticky='w', pady=5)
         low_entry.configure(background='white')
         # High volume
         ttk.Label(settings_frame, text="High volume (%):", style='White.TLabel').grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-        high_entry = ttk.Entry(settings_frame, textvariable=self.high_var, width=5)
+        high_entry = ttk.Entry(settings_frame, textvariable=self.high_var, width=5, justify='center')
         high_entry.grid(row=2, column=1, sticky='w', pady=5)
         high_entry.configure(background='white')
         # Priority
         ttk.Label(settings_frame, text="Priority:", style='White.TLabel').grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
-        priority_entry = ttk.Entry(settings_frame, textvariable=self.priority_var, width=5)
+        priority_entry = ttk.Entry(settings_frame, textvariable=self.priority_var, width=5, justify='center')
         priority_entry.grid(row=3, column=1, sticky='w', pady=5)
         priority_entry.configure(background='white')
         priority_hint = ttk.Label(settings_frame, text="Higher numbers = higher priority (1-100). Higher priority profiles execute LAST to override others.", foreground='#888', wraplength=250, justify='left', style='White.TLabel')
@@ -595,24 +595,45 @@ class AppVolumeControlGUI:
         current_index = self._get_current_profile_index()
         profiles = self.config.get('profiles', [])
         if len(profiles) <= 1:
-            messagebox.showwarning("Cannot Delete", "Cannot delete the last profile. At least one profile must remain.")
+            messagebox.showwarning("Cannot Delete", "Cannot delete the last profile. At least one profile must remain.", parent=self.root)
             return
         profile_name = profiles[current_index].get('name', f'Profile {current_index + 1}')
-        if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete '{profile_name}'?"):
-            return
-        profiles.pop(current_index)
-        self.config['profiles'] = profiles
-        save_config(self.config)
-        hotkey_manager.clear_hotkeys()
-        self.log_message("Перерегистрация всех хоткеев после удаления профиля...")
-        hotkey_manager.register_all_profile_hotkeys()
-        self._update_profile_list()
-        if current_index >= len(profiles):
-            current_index = len(profiles) - 1
-        if profiles:
-            self.profile_var.set(profiles[current_index].get('name', f'Profile {current_index + 1}'))
-            self._load_profile_to_ui(current_index)
-        self.log_message(f"✅ Deleted profile: {profile_name}")
+        # Центрируем окно относительно главного окна
+        confirm = tk.Toplevel(self.root)
+        confirm.title("Delete Profile")
+        confirm.geometry("320x120")
+        confirm.transient(self.root)
+        confirm.grab_set()
+        self._set_child_window_icon(confirm)
+        confirm.update_idletasks()
+        self._center_dialog_over_main(confirm, 320, 120)
+        label = ttk.Label(confirm, text=f"Are you sure you want to delete '{profile_name}'?", wraplength=300)
+        label.pack(pady=(18, 8))
+        btn_frame = ttk.Frame(confirm)
+        btn_frame.pack(pady=8)
+        def on_delete():
+            profiles.pop(current_index)
+            self.config['profiles'] = profiles
+            save_config(self.config)
+            hotkey_manager.clear_hotkeys()
+            self.log_message("Перерегистрация всех хоткеев после удаления профиля...")
+            hotkey_manager.register_all_profile_hotkeys()
+            self._update_profile_list()
+            if current_index >= len(profiles):
+                idx = len(profiles) - 1
+            else:
+                idx = current_index
+            if profiles:
+                self.profile_var.set(profiles[idx].get('name', f'Profile {idx + 1}'))
+                self._load_profile_to_ui(idx)
+            self.log_message(f"✅ Deleted profile: {profile_name}")
+            confirm.destroy()
+        def on_cancel():
+            confirm.destroy()
+        ttk.Button(btn_frame, text="Delete", command=on_delete).pack(side='left', padx=8)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side='left', padx=8)
+        confirm.bind('<Return>', lambda e: on_delete())
+        confirm.bind('<Escape>', lambda e: on_cancel())
     
     def _rename_current_profile(self) -> None:
         """Rename the currently selected profile"""
@@ -635,9 +656,7 @@ class AppVolumeControlGUI:
         
         # Center the dialog
         rename_win.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (300 // 2)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (120 // 2)
-        rename_win.geometry(f"300x120+{x}+{y}")
+        self._center_dialog_over_main(rename_win, 300, 120)
         
         ttk.Label(rename_win, text="Enter new profile name:").pack(pady=(10, 5))
         name_var = tk.StringVar(value=current_name)
@@ -649,13 +668,13 @@ class AppVolumeControlGUI:
         def on_rename():
             new_name = name_var.get().strip()
             if not new_name:
-                messagebox.showwarning("Invalid Name", "Profile name cannot be empty.")
+                messagebox.showwarning("Invalid Name", "Profile name cannot be empty.", parent=self.root)
                 return
             
             # Check for duplicate names
             existing_names = [p.get('name', f'Profile {i+1}') for i, p in enumerate(profiles) if i != current_index]
             if new_name in existing_names:
-                messagebox.showwarning("Duplicate Name", f"Profile name '{new_name}' already exists.")
+                messagebox.showwarning("Duplicate Name", f"Profile name '{new_name}' already exists.", parent=self.root)
                 return
             
             profiles[current_index]['name'] = new_name
@@ -706,14 +725,14 @@ class AppVolumeControlGUI:
             new_enabled = self.enabled_var.get()
             new_invert = self.invert_var.get()
             if new_priority < 1 or new_priority > 100:
-                messagebox.showerror("Priority Error", "Priority must be between 1 and 100.")
+                messagebox.showerror("Priority Error", "Priority must be between 1 and 100.", parent=self.root)
                 self.priority_var.set(old_priority)
                 return
             if not new_hotkey:
                 profile['hotkey'] = ''
             else:
                 if not hotkey_manager.is_valid_hotkey(new_hotkey):
-                    messagebox.showerror("Hotkey Error", "Hotkey must use only English letters, numbers, F-keys, and modifiers (Ctrl, Alt, Shift, Win).\nPlease try again.")
+                    messagebox.showerror("Hotkey Error", "Hotkey must use only English letters, numbers, F-keys, and modifiers (Ctrl, Alt, Shift, Win).\nPlease try again.", parent=self.root)
                     self.hotkey_var.set(old_hotkey)
                     return
                 profile['hotkey'] = new_hotkey
@@ -725,7 +744,6 @@ class AppVolumeControlGUI:
             profile['invert'] = new_invert
             save_config(self.config)
             if old_apps != new_apps:
-                audio_manager.clear_cache()
                 self.log_message(f"✅ App/Apps changed to: {', '.join(new_apps)} (session cache cleared)")
             if old_hotkey.lower() != new_hotkey.lower() or old_enabled != new_enabled or old_priority != new_priority:
                 try:
@@ -735,17 +753,17 @@ class AppVolumeControlGUI:
                     self.log_message(f"✅ Hotkeys updated for all profiles")
                 except Exception as e:
                     self.log_message(f"❌ Error updating hotkeys: {e}")
-                    messagebox.showwarning("Hotkey Error", f"Could not update hotkeys.\nPlease restart the app.\nError: {e}")
+                    messagebox.showwarning("Hotkey Error", f"Could not update hotkeys.\nPlease restart the app.\nError: {e}", parent=self.root)
             self._load_profile_to_ui(current_index)
             self._update_tray_tooltip()
             self.log_message("✅ Configuration saved!")
             self.save_btn.config(state='disabled')
         except ValueError:
             self.log_message("❌ Error saving: Invalid number for volume or priority.")
-            messagebox.showerror("Error", "Could not save settings: please enter valid numbers for volume (e.g., 20) and priority (1-100).")
+            messagebox.showerror("Error", "Could not save settings: please enter valid numbers for volume (e.g., 20) and priority (1-100).", parent=self.root)
         except Exception as e:
             self.log_message(f"❌ Error saving settings: {e}")
-            messagebox.showerror("Error", f"Could not save settings: {e}")
+            messagebox.showerror("Error", f"Could not save settings: {e}", parent=self.root)
     
     def _settings_changed(self, *args) -> None:
         """Check if settings have changed and enable/disable save button"""
@@ -805,9 +823,7 @@ class AppVolumeControlGUI:
         
         # Center the dialog over the main window
         win.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (500 // 2)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (400 // 2)
-        win.geometry(f"500x400+{x}+{y}")
+        self._center_dialog_over_main(win, 500, 400)
         
         # Main horizontal layout
         main_frame = ttk.Frame(win)
@@ -1018,4 +1034,36 @@ class AppVolumeControlGUI:
         self.root.mainloop()
 
     def _show_about_dialog(self):
-        messagebox.showinfo("About App Volume Control", "App Volume Control\n\nModern per-app volume hotkey manager for Windows.\n\n(c) 2024 Your Name") 
+        messagebox.showinfo("About App Volume Control", "App Volume Control\n\nModern per-app volume hotkey manager for Windows.\n\n(c) 2024 Your Name", parent=self.root)
+
+    def _center_dialog_over_main(self, dialog, width, height):
+        """Safely center dialog over main window, ensuring main window is visible"""
+        # Ensure main window is visible and on screen
+        if not self.root.winfo_viewable():
+            self.root.deiconify()
+        
+        # Get main window position and size
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        
+        # Calculate center position
+        x = main_x + (main_width // 2) - (width // 2)
+        y = main_y + (main_height // 2) - (height // 2)
+        
+        # Ensure dialog is on screen
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        if x < 0:
+            x = 0
+        elif x + width > screen_width:
+            x = screen_width - width
+            
+        if y < 0:
+            y = 0
+        elif y + height > screen_height:
+            y = screen_height - height
+        
+        dialog.geometry(f"{width}x{height}+{x}+{y}") 

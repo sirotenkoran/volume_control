@@ -86,7 +86,6 @@ class AudioManager:
         if success_count == 0:
             logger.warning(f"[{profile_name}] No sessions were controlled successfully.")
             return False
-        logger.info(f"[{profile_name}] App volumes set to {volume_percent}% for: {', '.join(app_targets)}")
         return True
     
     def set_system_volume(self, volume_percent: int) -> bool:
