@@ -58,19 +58,13 @@ class HotkeyManager:
         # System volume
         if any(t.lower() == 'system' for t in apps):
             if audio_manager.set_system_volume(target_volume):
-                if invert:
-                    logger.info(f"[{profile_name}] System volume set to {target_volume}% (Inverted: {'low' if hotkey_state['volume_low'] else 'high'} state) (Hotkey: {hotkey.upper()})")
-                else:
-                    logger.info(f"[{profile_name}] System volume {'restored' if not hotkey_state['volume_low'] else 'lowered'} to {target_volume}% (Hotkey: {hotkey.upper()})")
+                logger.info(f"[{profile_name}] System volume changed to {target_volume}% (Hotkey: {hotkey.upper()})")
         
         # App volumes
         app_targets = [t for t in apps if t.lower() != 'system']
         if app_targets:
             if audio_manager.set_app_volumes(app_targets, target_volume, profile_name):
-                if invert:
-                    logger.info(f"[{profile_name}] App volumes set to {target_volume}% for: {', '.join(app_targets)} (Inverted: {'low' if hotkey_state['volume_low'] else 'high'} state) (Hotkey: {hotkey.upper()})")
-                else:
-                    logger.info(f"[{profile_name}] App volumes {'restored' if not hotkey_state['volume_low'] else 'lowered'} to {target_volume}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
+                logger.info(f"[{profile_name}] App volumes changed to {target_volume}% for: {', '.join(app_targets)} (Hotkey: {hotkey.upper()})")
     
     def execute_hotkey_profiles(self, hotkey: str) -> None:
         """Execute all profiles for a given hotkey in priority order (case-insensitive)"""

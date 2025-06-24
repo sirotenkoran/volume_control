@@ -31,6 +31,8 @@ class AppVolumeControlGUI:
         self.config = None
         self.tray_icon = None
         self.log_text = None
+        self._log_buffer = []  # Буфер для логов до инициализации log_text
+        self._log_handler = None  # Для кастомного лог-хендлера
         
         # UI variables - will be initialized after root window is created
         self.profile_var = None
@@ -87,6 +89,28 @@ class AppVolumeControlGUI:
         self.autostart_var = tk.BooleanVar()
         self.minimize_var = tk.BooleanVar()
     
+    def attach_logger(self):
+        class TkLogHandler(logging.Handler):
+            def __init__(self, gui):
+                super().__init__()
+                self.gui = gui
+            def emit(self, record):
+                msg = self.format(record)
+                # Не даём рекурсии
+                if hasattr(self.gui, 'log_text'):
+                    if not msg.startswith('TkLogHandler:'):
+                        self.gui.log_message(msg)
+        self._log_handler = TkLogHandler(self)
+        self._log_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        self._log_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(self._log_handler)
+
+    def detach_logger(self):
+        if self._log_handler:
+            logging.getLogger().removeHandler(self._log_handler)
+            self._log_handler = None
+
     def create_main_window(self):
         """Create and configure the main application window"""
         self.root = tk.Tk()
@@ -94,37 +118,74 @@ class AppVolumeControlGUI:
         self.root.geometry("600x750")
         self.root.resizable(True, True)
         self.root.minsize(500, 650)
-        
-        # Initialize Tkinter variables after root window is created
         self._initialize_variables()
-        
-        # Set icon for window and taskbar
         self._set_window_icon()
-        
-        # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        
-        # Create main frame
-        main_frame = ttk.Frame(self.root, padding=20)
-        main_frame.grid(row=0, column=0, sticky='nsew')
-        main_frame.columnconfigure(1, weight=1)
-        
-        # Create UI components
-        self._create_title_section(main_frame)
-        self._create_warning_section(main_frame)
-        self._create_profile_section(main_frame)
-        self._create_settings_section(main_frame)
-        self._create_log_section(main_frame)
-        self._create_tray_button(main_frame)
-        
-        # Configure row weights for resizing
-        main_frame.rowconfigure(7, weight=1)
-        main_frame.rowconfigure(8, weight=0)
-        
-        # Set up window close handler
+
+        # --- Title and Important block ---
+        title_frame = ttk.Frame(self.root)
+        title_frame.grid(row=0, column=0, sticky='ew', padx=0, pady=(10, 0))
+        title_frame.columnconfigure(0, weight=1)
+        self._create_title_section(title_frame)
+        self._create_warning_section(title_frame)
+
+        # --- Notebook (Tabs) ---
+        notebook = ttk.Notebook(self.root)
+        notebook.grid(row=1, column=0, sticky='nsew', padx=16, pady=(0, 8))
+        self.root.rowconfigure(1, weight=1)
+        self.root.columnconfigure(0, weight=1)
+
+        style = ttk.Style()
+        style.configure('White.TFrame', background='white')
+        style.configure('White.TLabelframe', background='white', bordercolor='#d9d9d9')
+        style.configure('White.TLabelframe.Label', background='white')
+        style.configure('White.TLabel', background='white')
+        style.configure('White.TCheckbutton', background='white')
+        style.configure('White.TCombobox', fieldbackground='white', background='white')
+        style.configure('White.TButton', background='white')
+
+        # --- TAB 1: PROFILES ---
+        profiles_frame = ttk.Frame(notebook, style='White.TFrame')
+        profiles_frame.columnconfigure(0, weight=1)
+        notebook.add(profiles_frame, text="Profiles")
+        center_frame = ttk.Frame(profiles_frame, style='White.TFrame')
+        center_frame.grid(row=0, column=0, sticky='n', padx=0, pady=0)
+        center_frame.columnconfigure(0, weight=1)
+        self._create_profile_section(center_frame)
+        tray_btn_frame = ttk.Frame(center_frame, style='White.TFrame')
+        tray_btn_frame.grid(row=3, column=0, pady=(8, 0), sticky='ew')
+        tray_btn = ttk.Button(tray_btn_frame, text="Minimize to Tray", command=self._minimize_to_tray, width=20)
+        tray_btn.pack(anchor='center')
+
+        # --- TAB 2: ACTIVITY LOG ---
+        log_tab = ttk.Frame(notebook, style='White.TFrame')
+        log_tab.rowconfigure(0, weight=1)
+        log_tab.columnconfigure(0, weight=1)
+        notebook.add(log_tab, text="Activity Log")
+        self._create_log_section(log_tab)
+
+        # --- TAB 3: SETTINGS (Global Settings) ---
+        settings_tab = ttk.Frame(notebook, style='White.TFrame')
+        settings_tab.columnconfigure(0, weight=1)
+        notebook.add(settings_tab, text="Settings")
+        # Startup Settings с обводкой
+        startup_settings_frame = ttk.LabelFrame(settings_tab, text="Startup Settings", padding=10, style='White.TLabelframe')
+        startup_settings_frame.grid(row=0, column=0, sticky='ew', pady=(24, 0), padx=20)
+        startup_settings_frame.columnconfigure(0, weight=1)
+        autostart_chk = ttk.Checkbutton(startup_settings_frame, text="Start with Windows", variable=self.autostart_var, command=self._on_autostart_toggle, style='White.TCheckbutton')
+        autostart_chk.grid(row=0, column=0, sticky='w', pady=(0, 5))
+        minimize_chk = ttk.Checkbutton(startup_settings_frame, text="Minimize to tray on startup", variable=self.minimize_var, command=self._on_minimize_toggle, style='White.TCheckbutton')
+        minimize_chk.grid(row=1, column=0, sticky='w')
+
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
+
+        # --- Адаптивный перенос текста в Important ---
+        self.root.bind('<Configure>', self._on_resize_warning)
+        self._warning_label = None  # для доступа в _on_resize_warning
+        self._warning_icon = None
+        self.attach_logger()  # Подключаем логгер к Activity Log
+
         return self.root
     
     def _set_window_icon(self):
@@ -198,126 +259,129 @@ class AppVolumeControlGUI:
             logger.debug(f"Could not set child window icon: {e}")
     
     def _create_title_section(self, parent):
-        """Create the title section"""
-        title_label = ttk.Label(parent, text="App Volume Control", font=('Arial', 16, 'bold'))
-        title_label.grid(row=0, column=0, columnspan=2, pady=(0, 20))
+        title = ttk.Label(parent, text="App Volume Control", font=("Segoe UI", 18, "bold"))
+        title.grid(row=0, column=0, sticky='ew', pady=(0, 8))
+        parent.columnconfigure(0, weight=1)
+        title.configure(anchor='center', justify='center')
     
     def _create_warning_section(self, parent):
-        """Create the warning section"""
-        warning_frame = ttk.LabelFrame(parent, text="⚠️ Important", padding=10)
-        warning_frame.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(0, 20))
-        warning_text = """This program only works with the default output device in Windows. \nMake sure that the program whose volume you want to change (e.g., Discord) is \nset to use the 'Default' output device in its settings, or that the system's \ndefault output device matches the one used by your program (e.g., Discord)."""    
-        warning_label = ttk.Label(warning_frame, text=warning_text, foreground='red', wraplength=550)
-        warning_label.pack()
+        warning_frame = ttk.LabelFrame(parent, text="Important", padding=10)
+        warning_frame.grid(row=1, column=0, sticky='ew', pady=(0, 20), padx=0)
+        warning_frame.columnconfigure(0, weight=1)
+        warning_frame.rowconfigure(0, weight=1)
+        # Внутренний фрейм для центрирования
+        center_row = ttk.Frame(warning_frame)
+        center_row.grid(row=0, column=0, sticky='ew')
+        center_row.columnconfigure(0, weight=1)
+        center_row.columnconfigure(1, weight=0)
+        center_row.columnconfigure(2, weight=1)
+        # Вложенный фрейм для иконки и текста
+        content_frame = ttk.Frame(center_row)
+        content_frame.grid(row=0, column=1)
+        self._warning_icon = ttk.Label(content_frame, text="\u26A0", font=("Segoe UI", 14))
+        self._warning_icon.pack(side='left', padx=(0, 8))
+        warning_text = ("This program only works with the default output device in Windows. Make sure that the program whose volume you want to change (e.g., Discord) is set to use the 'Default' output device in its settings, or that the system's default output device matches the one used by your program (e.g., Discord).")
+        self._warning_label = ttk.Label(content_frame, text=warning_text, foreground='#c00', wraplength=520, justify='left', font=("Segoe UI", 10), anchor='w')
+        self._warning_label.pack(side='left')
+    
+    def _on_resize_warning(self, event):
+        # Адаптивный перенос текста в блоке Important
+        if self._warning_label:
+            # Получаем ширину warning_frame (родителя warning_label)
+            parent = self._warning_label.master
+            width = parent.winfo_width()
+            # Оставляем место под иконку (если ширина маленькая — вертикально)
+            if width < 400:
+                self._warning_icon.grid_configure(row=0, column=0, sticky='nw', pady=(0, 8))
+                self._warning_label.grid_configure(row=1, column=0, sticky='w', columnspan=2)
+                self._warning_label.configure(wraplength=width-32)
+            else:
+                self._warning_icon.grid_configure(row=0, column=0, sticky='nw', pady=0)
+                self._warning_label.grid_configure(row=0, column=1, sticky='w', columnspan=1)
+                self._warning_label.configure(wraplength=width-60)
     
     def _create_profile_section(self, parent):
-        """Create the profile management section"""
-        profile_frame = ttk.LabelFrame(parent, text="Profile Management", padding=10)
-        profile_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+        profile_frame = ttk.Frame(parent, padding=10, style='White.TFrame')
+        profile_frame.grid(row=2, column=0, sticky='ew', pady=(18, 20))
         profile_frame.columnconfigure(1, weight=1)
-        
         # Profile selection
-        ttk.Label(profile_frame, text="Active Profile:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
-        self.profile_combo = ttk.Combobox(profile_frame, textvariable=self.profile_var, state='readonly', width=30)
-        self.profile_combo.grid(row=0, column=1, sticky='w', pady=5)
-        
-        # Profile management buttons
-        profile_btn_frame = ttk.Frame(profile_frame)
-        profile_btn_frame.grid(row=0, column=2, sticky='w', padx=(10, 0), pady=5)
-        
-        add_profile_btn = ttk.Button(profile_btn_frame, text="Add Profile", width=12, command=self._add_new_profile)
+        ttk.Label(profile_frame, text="Active Profile:", style='White.TLabel').grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+        self.profile_combo = ttk.Combobox(profile_frame, textvariable=self.profile_var, state='readonly', width=30, style='White.TCombobox')
+        self.profile_combo.grid(row=0, column=1, sticky='ew', pady=5)
+        profile_btn_frame = ttk.Frame(profile_frame, style='White.TFrame')
+        profile_btn_frame.grid(row=0, column=2, sticky='e', padx=(10, 0), pady=5)
+        add_profile_btn = ttk.Button(profile_btn_frame, text="Add Profile", width=12, command=self._add_new_profile, style='White.TButton')
         add_profile_btn.pack(side='left', padx=(0, 5))
-        
-        rename_profile_btn = ttk.Button(profile_btn_frame, text="Rename", width=12, command=self._rename_current_profile)
+        rename_profile_btn = ttk.Button(profile_btn_frame, text="Rename", width=12, command=self._rename_current_profile, style='White.TButton')
         rename_profile_btn.pack(side='left', padx=(0, 5))
-        
-        delete_profile_btn = ttk.Button(profile_btn_frame, text="Delete Profile", width=12, command=self._delete_current_profile)
+        delete_profile_btn = ttk.Button(profile_btn_frame, text="Delete Profile", width=12, command=self._delete_current_profile, style='White.TButton')
         delete_profile_btn.pack(side='left')
-        
-        # Profile info display
-        profile_info_frame = ttk.Frame(profile_frame)
+        profile_info_frame = ttk.Frame(profile_frame, style='White.TFrame')
         profile_info_frame.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(10, 0))
-        
-        # Enabled checkbox
-        enabled_chk = ttk.Checkbutton(profile_info_frame, text="Profile Enabled", variable=self.enabled_var, command=self._on_enabled_changed)
+        enabled_chk = ttk.Checkbutton(profile_info_frame, text="Profile Enabled", variable=self.enabled_var, command=self._on_enabled_changed, style='White.TCheckbutton')
         enabled_chk.pack(side='left', padx=(0, 20))
-        
-        # Invert checkbox
-        invert_chk = ttk.Checkbutton(profile_info_frame, text="Invert Logic", variable=self.invert_var, command=self._on_invert_changed)
+        invert_chk = ttk.Checkbutton(profile_info_frame, text="Invert Logic", variable=self.invert_var, command=self._on_invert_changed, style='White.TCheckbutton')
         invert_chk.pack(side='left', padx=(0, 20))
-        
-        self.profile_info_label = ttk.Label(profile_info_frame, text="", foreground='#666', font=('Arial', 9))
-        self.profile_info_label.pack(side='left')
-    
-    def _create_settings_section(self, parent):
-        """Create the settings section"""
-        settings_frame = ttk.LabelFrame(parent, text="Settings", padding=10)
-        settings_frame.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(0, 20))
+        # --- PROFILE SETTINGS (fields) ---
+        settings_frame = ttk.LabelFrame(profile_frame, text="Profile Settings", padding=10, style='White.TLabelframe')
+        settings_frame.grid(row=2, column=0, columnspan=3, sticky='ew', pady=(10, 0))
         settings_frame.columnconfigure(1, weight=1)
-        
-        # Hotkey row
-        ttk.Label(settings_frame, text="Hotkey:").grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
-        hotkey_row = ttk.Frame(settings_frame)
-        hotkey_row.grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
-        hotkey_entry = ttk.Entry(hotkey_row, textvariable=self.hotkey_var, width=20)
-        hotkey_entry.pack(side='left')
-        hotkey_hint = ttk.Label(hotkey_row, text="Click and press a hotkey. Press Esc to clear.", foreground='#888')
-        hotkey_hint.pack(side='left', padx=(6,0))
-        
-        # Set up hotkey recording
+        # Hotkey
+        ttk.Label(settings_frame, text="Hotkey:", style='White.TLabel').grid(row=0, column=0, sticky='w', pady=5, padx=(0, 10))
+        hotkey_entry = ttk.Entry(settings_frame, textvariable=self.hotkey_var, width=18)
+        hotkey_entry.grid(row=0, column=1, sticky='w', pady=5)
+        hotkey_entry.configure(background='white')
+        hotkey_hint = ttk.Label(settings_frame, text="Click and press a hotkey. Press Esc to clear.", foreground='#888', style='White.TLabel')
+        hotkey_hint.grid(row=0, column=2, sticky='w', padx=(6,0))
         self._setup_hotkey_recording(hotkey_entry)
-        
-        # Volume settings
-        ttk.Label(settings_frame, text="Low volume (%):").grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
-        low_entry = ttk.Entry(settings_frame, textvariable=self.low_var, width=20)
+        # Low volume
+        ttk.Label(settings_frame, text="Low volume (%):", style='White.TLabel').grid(row=1, column=0, sticky='w', pady=5, padx=(0, 10))
+        low_entry = ttk.Entry(settings_frame, textvariable=self.low_var, width=5)
         low_entry.grid(row=1, column=1, sticky='w', pady=5)
-        
-        ttk.Label(settings_frame, text="High volume (%):").grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
-        high_entry = ttk.Entry(settings_frame, textvariable=self.high_var, width=20)
+        low_entry.configure(background='white')
+        # High volume
+        ttk.Label(settings_frame, text="High volume (%):", style='White.TLabel').grid(row=2, column=0, sticky='w', pady=5, padx=(0, 10))
+        high_entry = ttk.Entry(settings_frame, textvariable=self.high_var, width=5)
         high_entry.grid(row=2, column=1, sticky='w', pady=5)
-        
+        high_entry.configure(background='white')
         # Priority
-        ttk.Label(settings_frame, text="Priority:").grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
-        priority_entry = ttk.Entry(settings_frame, textvariable=self.priority_var, width=20)
+        ttk.Label(settings_frame, text="Priority:", style='White.TLabel').grid(row=3, column=0, sticky='w', pady=5, padx=(0, 10))
+        priority_entry = ttk.Entry(settings_frame, textvariable=self.priority_var, width=5)
         priority_entry.grid(row=3, column=1, sticky='w', pady=5)
-        priority_hint = ttk.Label(settings_frame, text="Higher numbers = higher priority (1-100). Higher priority profiles execute LAST to override others.", foreground='#888')
+        priority_entry.configure(background='white')
+        priority_hint = ttk.Label(settings_frame, text="Higher numbers = higher priority (1-100). Higher priority profiles execute LAST to override others.", foreground='#888', wraplength=250, justify='left', style='White.TLabel')
         priority_hint.grid(row=3, column=2, sticky='w', pady=5, padx=(10, 0))
-        
-        # App selection
-        ttk.Label(settings_frame, text="App/Apps:").grid(row=4, column=0, sticky='w', pady=5, padx=(0, 10))
-        app_row = ttk.Frame(settings_frame)
-        app_row.grid(row=4, column=1, columnspan=2, sticky='w', pady=5)
+        # App/Apps field
+        ttk.Label(settings_frame, text="App/Apps:", style='White.TLabel').grid(row=4, column=0, sticky='w', pady=5, padx=(0, 10))
+        app_row = ttk.Frame(settings_frame, style='White.TFrame')
+        app_row.grid(row=4, column=1, columnspan=2, sticky='ew', pady=5)
+        app_row.columnconfigure(0, weight=1)
         app_entry = ttk.Entry(app_row, textvariable=self.app_var, width=30)
-        app_entry.pack(side='left')
-        choose_btn = ttk.Button(app_row, text="Choose...", command=self._choose_app_multi)
+        app_entry.pack(side='left', fill='x', expand=True)
+        app_entry.configure(background='white')
+        choose_btn = ttk.Button(app_row, text="Choose...", command=self._choose_app_multi, style='White.TButton')
         choose_btn.pack(side='left', padx=(6,0))
-        app_comment = ttk.Label(settings_frame, text="Comma-separated. Use 'system' for system volume, or specify one or more app process names (e.g. Discord.exe,chrome.exe)", foreground='#888', wraplength=350, justify='left')
+        app_comment = ttk.Label(settings_frame, text="Comma-separated. Use 'system' for system volume, or specify one or more app process names (e.g. Discord.exe,chrome.exe)", foreground='#888', wraplength=350, justify='left', style='White.TLabel')
         app_comment.grid(row=5, column=1, columnspan=2, sticky='w', pady=(0,10))
-        
-        # Save button
-        self.save_btn = ttk.Button(settings_frame, text="Save Settings", command=self._save_settings)
-        self.save_btn.grid(row=6, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
-        
-        # Autostart and minimize options
-        autostart_chk = ttk.Checkbutton(settings_frame, text="Start with Windows", variable=self.autostart_var, command=self._on_autostart_toggle)
-        autostart_chk.grid(row=7, column=0, columnspan=2, sticky='w', pady=(10, 0))
-        
-        minimize_chk = ttk.Checkbutton(settings_frame, text="Minimize to tray on startup", variable=self.minimize_var, command=self._on_minimize_toggle)
-        minimize_chk.grid(row=8, column=0, columnspan=2, sticky='w', pady=(0, 0))
+        # Save Profile button
+        save_btn = ttk.Button(settings_frame, text="Save Profile", command=self._save_settings, width=16, style='White.TButton')
+        save_btn.grid(row=6, column=2, sticky='e', pady=(10, 0), padx=(0, 2))
+        self.save_btn = save_btn
     
     def _create_log_section(self, parent):
-        """Create the log display section"""
-        log_frame = ttk.LabelFrame(parent, text="Activity Log", padding=6)
-        log_frame.grid(row=7, column=0, columnspan=2, sticky='nsew', pady=(0, 8))
+        log_frame = ttk.Frame(parent, style='White.TFrame')
+        log_frame.grid(row=0, column=0, columnspan=2, sticky='nsew', padx=8, pady=8)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=10)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, background='white')
         self.log_text.grid(row=0, column=0, sticky='nsew')
-    
-    def _create_tray_button(self, parent):
-        """Create the minimize to tray button"""
-        tray_btn = ttk.Button(parent, text="Minimize to Tray", command=self._minimize_to_tray)
-        tray_btn.grid(row=8, column=0, columnspan=2, pady=(0, 12))
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+        # После создания log_text — вывести буфер
+        if self._log_buffer:
+            for msg in self._log_buffer:
+                self.log_text.insert(tk.END, msg)
+            self._log_buffer.clear()
     
     def _setup_hotkey_recording(self, hotkey_entry):
         """Set up hotkey recording functionality"""
@@ -407,9 +471,15 @@ class AppVolumeControlGUI:
     def log_message(self, message: str) -> None:
         """Add message to log display"""
         if self.log_text:
+            if self._log_buffer:
+                for msg in self._log_buffer:
+                    self.log_text.insert(tk.END, msg)
+                self._log_buffer.clear()
             self.log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
             self.log_text.see(tk.END)
             self.log_text.update()
+        else:
+            self._log_buffer.append(f"{time.strftime('%H:%M:%S')} - {message}\n")
     
     def _update_profile_list(self) -> None:
         """Update the profile dropdown list"""
@@ -439,11 +509,9 @@ class AppVolumeControlGUI:
         return 0
     
     def _load_profile_to_ui(self, profile_index: int) -> None:
-        """Load profile data into UI fields"""
         profiles = self.config.get('profiles', [])
         if profile_index >= len(profiles):
             return
-        
         profile = profiles[profile_index]
         self.hotkey_var.set(profile.get('hotkey', ''))
         self.low_var.set(profile.get('low_volume', 20))
@@ -452,17 +520,6 @@ class AppVolumeControlGUI:
         self.app_var.set(','.join(profile.get('apps', [])))
         self.enabled_var.set(profile.get('enabled', True))
         self.invert_var.set(profile.get('invert', False))
-        
-        # Update profile info
-        hotkey = profile.get('hotkey', '').upper()
-        low = profile.get('low_volume', 20)
-        high = profile.get('high_volume', 100)
-        priority = profile.get('priority', 1)
-        apps = ', '.join(profile.get('apps', []))
-        enabled_status = "ENABLED" if profile.get('enabled', True) else "DISABLED"
-        invert_status = "INVERTED" if profile.get('invert', False) else "NORMAL"
-        info_text = f"Status: {enabled_status} | Logic: {invert_status} | Priority: {priority} | Hotkey: {hotkey} | Volume: {low}% ↔ {high}% | Apps: {apps}"
-        self.profile_info_label.config(text=info_text)
     
     def _add_new_profile(self) -> None:
         profiles = self.config.get('profiles', [])
@@ -956,4 +1013,7 @@ class AppVolumeControlGUI:
     
     def run(self) -> None:
         """Run the GUI main loop"""
-        self.root.mainloop() 
+        self.root.mainloop()
+
+    def _show_about_dialog(self):
+        messagebox.showinfo("About App Volume Control", "App Volume Control\n\nModern per-app volume hotkey manager for Windows.\n\n(c) 2024 Your Name") 
