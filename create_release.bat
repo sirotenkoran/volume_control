@@ -5,16 +5,21 @@ echo =================================
 REM Check if version argument is provided
 if "%1"=="" (
     echo ❌ Error: Please provide a version number
-    echo Usage: create_release.bat v1.2.3
+    echo Usage: create_release.bat v1.2.3 [release_notes]
+    echo Example: create_release.bat v1.0.0 "Bug fixes and performance improvements"
     echo Example: create_release.bat v1.0.0
     pause
     exit /b 1
 )
 
 set VERSION=%1
+set RELEASE_NOTES=%2
 
 echo.
 echo 📋 Creating release for version: %VERSION%
+if not "%RELEASE_NOTES%"=="" (
+    echo 📝 Release notes: %RELEASE_NOTES%
+)
 echo.
 
 REM Check if we're in a git repository
@@ -59,7 +64,12 @@ echo.
 
 REM Create and push the tag
 echo 🏷️  Creating tag: %VERSION%
-git tag %VERSION%
+if not "%RELEASE_NOTES%"=="" (
+    echo 📝 Adding release notes: %RELEASE_NOTES%
+    git tag -a %VERSION% -m "%RELEASE_NOTES%"
+) else (
+    git tag %VERSION%
+)
 if errorlevel 1 (
     echo ❌ Failed to create tag
     pause
@@ -77,6 +87,9 @@ if errorlevel 1 (
 
 echo.
 echo 🎉 Release %VERSION% created successfully!
+if not "%RELEASE_NOTES%"=="" (
+    echo 📝 Release notes included: %RELEASE_NOTES%
+)
 echo.
 echo 📋 Next steps:
 echo 1. Go to GitHub Actions to monitor the build: https://github.com/sirotenkoran/volume_control/actions

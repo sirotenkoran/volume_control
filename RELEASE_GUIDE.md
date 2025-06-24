@@ -31,6 +31,9 @@ The easiest way to create a release is using the included `create_release.bat` s
 ```bash
 # Create a release with version v1.2.3
 create_release.bat v1.2.3
+
+# Create a release with version and release notes
+create_release.bat v1.2.3 "Bug fixes and performance improvements"
 ```
 
 This script will:
@@ -38,7 +41,7 @@ This script will:
 - ✅ Verify there are no uncommitted changes
 - ✅ Check if the tag already exists
 - ✅ Build the executable locally
-- ✅ Create the git tag
+- ✅ Create the git tag (with optional release notes)
 - ✅ Push the tag to GitHub
 - ✅ Provide next steps and monitoring links
 
@@ -62,6 +65,9 @@ git push origin main
 # Create a new tag (use semantic versioning)
 git tag v1.2.3
 
+# Or create an annotated tag with release notes
+git tag -a v1.2.3 -m "Bug fixes and performance improvements"
+
 # Push the tag to trigger the release build
 git push origin v1.2.3
 ```
@@ -72,11 +78,31 @@ git push origin v1.2.3
 3. Monitor the build progress
 4. Check that the release was created successfully
 
+## 📝 Adding Release Notes
+
+### Method 1: Using the Script (Recommended)
+```bash
+create_release.bat v1.2.3 "Bug fixes and performance improvements"
+```
+
+### Method 2: Manual Annotated Tag
+```bash
+git tag -a v1.2.3 -m "Bug fixes and performance improvements"
+git push origin v1.2.3
+```
+
+### Method 3: Edit After Creation
+1. Create the release using any method above
+2. Go to GitHub → Releases
+3. Click "Edit" on the created release
+4. Add detailed release notes in the description field
+5. Save the changes
+
 ## 📦 Release Assets
 
 Each release will automatically include:
 - `AppVolumeControl.exe` - The main executable
-- Release notes (auto-generated from commits)
+- Release notes (auto-generated from commits or from tag message)
 - Source code (zip/tar.gz)
 
 ## 🔧 Manual Release (if needed)
